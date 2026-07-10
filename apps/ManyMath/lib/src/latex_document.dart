@@ -76,11 +76,25 @@ final class DisplayMathBlock extends DocBlock {
   final List<int>? latexSourceMap;
 }
 
-final class ListBlock extends DocBlock {
-  const ListBlock({required this.ordered, required this.items});
+/// `bullet` for `itemize`, `numbered` for `enumerate`, `description` for
+/// `description` (each item's `\item[label]` is required and shown bolded
+/// ahead of the item, rather than a bullet or number).
+enum ListStyle { bullet, numbered, description }
 
-  final bool ordered;
+final class ListBlock extends DocBlock {
+  const ListBlock({required this.style, required this.items});
+
+  final ListStyle style;
   final List<List<DocInline>> items;
+}
+
+/// A verbatim-like environment (`lstlisting`, `verbatim`, `Verbatim`,
+/// `minted`): shown as preformatted monospace text, with no macro or math
+/// interpretation of its contents.
+final class CodeBlock extends DocBlock {
+  const CodeBlock(this.code);
+
+  final String code;
 }
 
 /// One run of inline content inside a paragraph, heading, or list item.
@@ -89,11 +103,19 @@ sealed class DocInline {
 }
 
 final class TextRun extends DocInline {
-  const TextRun(this.text, {this.bold = false, this.italic = false});
+  const TextRun(
+    this.text, {
+    this.bold = false,
+    this.italic = false,
+    this.monospace = false,
+    this.underline = false,
+  });
 
   final String text;
   final bool bold;
   final bool italic;
+  final bool monospace;
+  final bool underline;
 }
 
 final class InlineMath extends DocInline {
@@ -129,6 +151,11 @@ const _mathEnvironments = {
   'gather*',
 };
 
+/// Verbatim-like environments captured as a whole [CodeBlock]; kept in sync
+/// with [_verbatimEnvironmentRe] above, which shields their `%` characters
+/// from comment-stripping.
+const _codeEnvironments = {'lstlisting', 'verbatim', 'Verbatim', 'minted'};
+
 /// Parses [source] into document blocks. Lenient by construction: malformed
 /// input degrades to plain text rather than failing.
 List<DocBlock> parseLatexDocument(String source) {
@@ -139,6 +166,10 @@ List<DocBlock> parseLatexDocument(String source) {
   final stripped = _stripComments(normalized.text, normalized.map);
   var text = stripped.text;
   var map = stripped.map;
+  // Scanned from the full stripped text (preamble included, before the
+  // \begin{document} slice below drops it) so preamble-declared macros are
+  // seen; see _expandTextMacros.
+  final macros = _parseMacroDefs(stripped.text);
 
   final title = _argOf(text, stripped.map, r'\title');
   final author = _argOf(text, stripped.map, r'\author');
@@ -177,6 +208,7 @@ List<DocBlock> parseLatexDocument(String source) {
     final start = paragraphStart + leading;
     final spans = parseInline(
       content,
+      macros: macros,
       sourceMap: map.sublist(start, start + content.length),
     );
     if (spans.isNotEmpty) blocks.add(ParagraphBlock(spans));
@@ -268,7 +300,28 @@ List<DocBlock> parseLatexDocument(String source) {
           i = next;
           continue;
         }
-        if (name == 'itemize' || name == 'enumerate') {
+        if (_codeEnvironments.contains(name)) {
+          flushParagraph();
+          var code = body;
+          // A `[options]` group (lstlisting/minted) or minted's required
+          // `{lang}` argument sits directly against `\begin{name}}`, with no
+          // line break before it, so it can't be mistaken for a first line
+          // of code that happens to start with `[` or `{`.
+          final leadingOptions = RegExp(r'^\[[^\n]*\]').matchAsPrefix(code);
+          if (leadingOptions != null) {
+            code = code.substring(leadingOptions.end);
+          }
+          final leadingArg = RegExp(r'^\{[^\n{}]*\}').matchAsPrefix(code);
+          if (leadingArg != null) code = code.substring(leadingArg.end);
+          // The line break right after \begin{...} (and its trailing one
+          // before \end{...}) is formatting, not code.
+          if (code.startsWith('\n')) code = code.substring(1);
+          if (code.endsWith('\n')) code = code.substring(0, code.length - 1);
+          blocks.add(CodeBlock(code));
+          i = next;
+          continue;
+        }
+        if (name == 'itemize' || name == 'enumerate' || name == 'description') {
           flushParagraph();
           // \item only, not \itemsep and friends. Nested block content
           // inside an item degrades to inline text (see parseInline), but
@@ -287,17 +340,33 @@ List<DocBlock> parseLatexDocument(String source) {
             final segment = label.$1;
             final leading = segment.length - segment.trimLeft().length;
             final trimmed = segment.trim();
-            if (trimmed.isEmpty) continue;
+            if (trimmed.isEmpty && label.$3 == null) continue;
             final start = env.end + segStart + label.$2 + leading;
+            final itemSpans = parseInline(
+              trimmed,
+              macros: macros,
+              sourceMap: map.sublist(start, start + trimmed.length),
+            );
+            // \description's `[label]` is the item's required title, not an
+            // optional override like itemize/enumerate's, so it's shown
+            // (bolded) instead of being dropped.
             items.add(
-              parseInline(
-                trimmed,
-                sourceMap: map.sublist(start, start + trimmed.length),
-              ),
+              name == 'description' && label.$3 != null
+                  ? [
+                      TextRun(label.$3!.trim(), bold: true),
+                      const TextRun(' '),
+                      ...itemSpans,
+                    ]
+                  : itemSpans,
             );
           }
           if (items.isNotEmpty) {
-            blocks.add(ListBlock(ordered: name == 'enumerate', items: items));
+            final style = switch (name) {
+              'enumerate' => ListStyle.numbered,
+              'description' => ListStyle.description,
+              _ => ListStyle.bullet,
+            };
+            blocks.add(ListBlock(style: style, items: items));
           }
           i = next;
           continue;
@@ -318,6 +387,7 @@ List<DocBlock> parseLatexDocument(String source) {
             level,
             parseInline(
               arg.$1,
+              macros: macros,
               sourceMap: map.sublist(section.end, section.end + arg.$1.length),
             ),
           ),
@@ -359,12 +429,26 @@ List<DocInline> parseInline(
   String source, {
   bool bold = false,
   bool italic = false,
+  bool monospace = false,
+  bool underline = false,
+  Map<String, MacroDefinition> macros = const {},
   List<int>? sourceMap,
 }) {
   assert(
     sourceMap == null || sourceMap.length == source.length,
     'sourceMap must align 1:1 with source',
   );
+  if (macros.isNotEmpty) {
+    final expanded = _expandTextMacros(source, macros);
+    if (expanded != source) {
+      source = expanded;
+      // The expansion changed the text's length/content, so per-character
+      // source positions no longer line up; math discovered inside an
+      // expanded macro loses its precise jump-to-source target rather than
+      // pointing at the wrong place.
+      sourceMap = null;
+    }
+  }
   final spans = <DocInline>[];
   final run = StringBuffer();
 
@@ -375,7 +459,15 @@ List<DocInline> parseInline(
     // Collapse whitespace runs (LaTeX treats newlines as spaces).
     final collapsed = content.replaceAll(RegExp(r'\s+'), ' ');
     if (collapsed.isNotEmpty) {
-      spans.add(TextRun(collapsed, bold: bold, italic: italic));
+      spans.add(
+        TextRun(
+          collapsed,
+          bold: bold,
+          italic: italic,
+          monospace: monospace,
+          underline: underline,
+        ),
+      );
     }
   }
 
@@ -463,10 +555,76 @@ List<DocInline> parseInline(
       continue;
     }
 
+    // Two-argument commands: the first argument (URL, color name) isn't
+    // shown, so only the second is flushed, recursively parsed and
+    // inheriting the current styles.
+    const twoArgCommands = {r'\href', r'\textcolor'};
+    final twoArgCommand = twoArgCommands
+        .where((name) => source.startsWith('$name{', i))
+        .firstOrNull;
+    if (twoArgCommand != null) {
+      final firstEnd = _balancedArg(source, i + twoArgCommand.length)?.$2;
+      if (firstEnd != null) {
+        final secondStart = _skipSpaces(source, firstEnd);
+        final second = _balancedArg(source, secondStart);
+        if (second != null) {
+          flushRun();
+          spans.addAll(
+            parseInline(
+              second.$1,
+              bold: bold,
+              italic: italic,
+              monospace: monospace,
+              underline: underline,
+              macros: macros,
+              sourceMap: sourceMap?.sublist(
+                secondStart + 1,
+                secondStart + 1 + second.$1.length,
+              ),
+            ),
+          );
+          i = second.$2;
+          continue;
+        }
+      }
+    }
+    // \url's argument is verbatim (LaTeX doesn't interpret `_`, `%`, etc.
+    // inside it), so it's taken as-is rather than recursively parsed.
+    if (source.startsWith(r'\url{', i)) {
+      final arg = _balancedArg(source, i + r'\url'.length);
+      if (arg != null) {
+        flushRun();
+        spans.add(
+          TextRun(
+            arg.$1,
+            bold: bold,
+            italic: italic,
+            monospace: true,
+            underline: underline,
+          ),
+        );
+        i = arg.$2;
+        continue;
+      }
+    }
+
     const styles = {
-      r'\textbf{': (bold: true, italic: false),
-      r'\textit{': (bold: false, italic: true),
-      r'\emph{': (bold: false, italic: true),
+      r'\textbf{': (bold: true, italic: false, monospace: false, underline: false),
+      r'\textit{': (bold: false, italic: true, monospace: false, underline: false),
+      r'\emph{': (bold: false, italic: true, monospace: false, underline: false),
+      // \paragraph/\subparagraph are LaTeX's smallest sectioning commands:
+      // a bold run-in heading that stays on the same line as the text that
+      // follows it, unlike \section and friends, so they belong here rather
+      // than alongside HeadingBlock.
+      r'\paragraph{': (bold: true, italic: false, monospace: false, underline: false),
+      r'\subparagraph{': (bold: true, italic: false, monospace: false, underline: false),
+      r'\texttt{': (bold: false, italic: false, monospace: true, underline: false),
+      r'\underline{': (bold: false, italic: false, monospace: false, underline: true),
+      // \gls{term}: the glossaries package's inline reference to a term
+      // defined elsewhere (\newglossaryentry), which this parser doesn't
+      // track. Showing the term itself, unstyled, beats leaking the raw
+      // command.
+      r'\gls{': (bold: false, italic: false, monospace: false, underline: false),
     };
     final style = styles.entries
         .where((e) => source.startsWith(e.key, i))
@@ -481,6 +639,9 @@ List<DocInline> parseInline(
             arg.$1,
             bold: bold || style.value.bold,
             italic: italic || style.value.italic,
+            monospace: monospace || style.value.monospace,
+            underline: underline || style.value.underline,
+            macros: macros,
             sourceMap: sourceMap?.sublist(argStart, argStart + arg.$1.length),
           ),
         );
@@ -526,6 +687,8 @@ List<DocInline> parseInline(
         formulas++;
       case ListBlock():
         block.items.forEach(countSpans);
+      case CodeBlock():
+        words += wordRe.allMatches(block.code).length;
     }
   }
   return (words: words, formulas: formulas);
@@ -589,17 +752,28 @@ int _matchingEnvEnd(String text, String name, int from) {
   return (text: out.toString(), map: map);
 }
 
+/// Verbatim-like environments whose body is displayed as code: `%` is a
+/// literal character in there, never a comment marker.
+final _verbatimEnvironmentRe = RegExp(
+  r'\\(begin|end)\{(lstlisting|verbatim|Verbatim|minted)\}',
+);
+
 /// Cuts each line at its first unescaped `%` (escaped means preceded by an
 /// odd number of backslashes: `\\%` IS a comment, after a line break).
 /// A line that was only a comment vanishes entirely, newline included, so
 /// it cannot fake the blank line that separates paragraphs (TeX's `%` eats
 /// the newline too). Composes the output map from [map], which carries
 /// [text]'s characters back to the original source.
+///
+/// Lines inside a verbatim-like environment (see [_verbatimEnvironmentRe])
+/// are kept whole, `%` and all, since a code listing's own comments aren't
+/// LaTeX comments.
 ({String text, List<int> map}) _stripComments(String text, List<int> map) {
   final out = StringBuffer();
   final outMap = <int>[];
   var first = true;
   var joinNextLine = false;
+  var inVerbatim = false;
   // Index (in [text]) of the newline terminating the previous kept line;
   // the separator written before the next kept line maps back to it.
   var prevNewline = -1;
@@ -608,17 +782,26 @@ int _matchingEnvEnd(String text, String name, int from) {
     final newlineIdx = text.indexOf('\n', lineStart);
     final lineEnd = newlineIdx >= 0 ? newlineIdx : text.length;
     final line = text.substring(lineStart, lineEnd);
+    final verbatimMarker = _verbatimEnvironmentRe.firstMatch(line);
+    final endsVerbatim = inVerbatim && verbatimMarker?.group(1) == 'end';
     var cut = -1;
-    for (var i = 0; i < line.length; i++) {
-      if (line[i] != '%') continue;
-      var backslashes = 0;
-      while (i - 1 - backslashes >= 0 && line[i - 1 - backslashes] == r'\') {
-        backslashes++;
+    if (!inVerbatim || endsVerbatim) {
+      for (var i = 0; i < line.length; i++) {
+        if (line[i] != '%') continue;
+        var backslashes = 0;
+        while (i - 1 - backslashes >= 0 && line[i - 1 - backslashes] == r'\') {
+          backslashes++;
+        }
+        if (backslashes.isEven) {
+          cut = i;
+          break;
+        }
       }
-      if (backslashes.isEven) {
-        cut = i;
-        break;
-      }
+    }
+    if (endsVerbatim) {
+      inVerbatim = false;
+    } else if (!inVerbatim && verbatimMarker?.group(1) == 'begin') {
+      inVerbatim = true;
     }
     final stripped = cut < 0 ? line : line.substring(0, cut);
     final commentOnly = cut >= 0 && stripped.trim().isEmpty;
@@ -678,14 +861,19 @@ int _matchingEnvEnd(String text, String name, int from) {
 }
 
 /// Drops an `\item[label]` optional argument from the start of an item
-/// segment, returning the remainder and how many characters were dropped.
-(String, int) _stripItemLabel(String segment) {
+/// segment, returning the remainder, how many characters were dropped, and
+/// the label text itself (null when there was none).
+(String, int, String?) _stripItemLabel(String segment) {
   final leading = segment.length - segment.trimLeft().length;
   final trimmed = segment.substring(leading);
-  if (!trimmed.startsWith('[')) return (segment, 0);
+  if (!trimmed.startsWith('[')) return (segment, 0, null);
   final close = trimmed.indexOf(']');
-  if (close < 0) return (segment, 0);
-  return (trimmed.substring(close + 1), leading + close + 1);
+  if (close < 0) return (segment, 0, null);
+  return (
+    trimmed.substring(close + 1),
+    leading + close + 1,
+    trimmed.substring(1, close),
+  );
 }
 
 /// First `\command{...}` argument in [text] (whitespace allowed before the
@@ -705,4 +893,275 @@ int _matchingEnvEnd(String text, String name, int from) {
     value: argument.$1,
     sourceMap: sourceMap.sublist(match.end, match.end + argument.$1.length),
   );
+}
+
+/// Occurrences of `\newcommand`, `\renewcommand`, `\providecommand`, and the
+/// `\def` family that *declare* a macro, as opposed to invoking one.
+final _macroDefKeyword = RegExp(
+  r'\\(newcommand|renewcommand|providecommand|def|gdef|edef|xdef)(?![a-zA-Z])',
+);
+
+/// Collects every user macro declared anywhere in [source] (preamble or
+/// body) into one block of `\providecommand`/`\def` statements, in source
+/// order.
+///
+/// RaTeX's macro expander understands `\newcommand` and friends natively,
+/// but [parseLatexDocument] hands each formula to RaTeX in isolation, so a
+/// paper's own macros — used throughout nearly every real-world LaTeX
+/// document — would otherwise report as "Undefined control sequence" on
+/// every formula that uses them. Prepending this block to a formula before
+/// rendering (see `document_view.dart` and `formula_check.dart`) lets those
+/// macros resolve the same way they would in a full LaTeX run.
+///
+/// `\newcommand`/`\renewcommand` are rewritten to `\providecommand`, which
+/// RaTeX accepts whether or not the name is already defined. Left as-is, a
+/// `\newcommand` that happens to collide with a RaTeX builtin, or a
+/// `\renewcommand` for a name RaTeX never predefined, would throw and take
+/// every later formula down with it, since all formulas share one prelude.
+String extractMacroPreamble(String source) {
+  final normalized = _normalizeLineEndings(source);
+  final text = _stripComments(normalized.text, normalized.map).text;
+
+  final definitions = StringBuffer();
+  for (final match in _macroDefKeyword.allMatches(text)) {
+    final keyword = match.group(1)!;
+    final end = keyword.endsWith('def')
+        ? _readDefEnd(text, match.end)
+        : _readNewcommandEnd(text, match.end);
+    if (end == null) continue;
+    final rewritten = keyword == 'newcommand' || keyword == 'renewcommand'
+        ? r'\providecommand'
+        : '\\$keyword';
+    definitions
+      ..write(rewritten)
+      ..write(text.substring(match.end, end))
+      ..write('\n');
+  }
+  return definitions.toString();
+}
+
+/// Index just past a `\newcommand`-family declaration's body, given [from]
+/// just after the keyword (`\newcommand`, `\renewcommand`, ...); null when
+/// the declaration is too malformed to safely extract.
+int? _readNewcommandEnd(String text, int from) {
+  var i = _skipSpaces(text, from);
+  if (i < text.length && text[i] == '*') i = _skipSpaces(text, i + 1);
+  final afterName = _readMacroName(text, i);
+  if (afterName == null) return null;
+  i = _skipSpaces(text, afterName);
+  // Up to two optional `[...]` groups: argument count and a default value
+  // for the first argument.
+  for (var group = 0; group < 2 && i < text.length && text[i] == '['; group++) {
+    final close = text.indexOf(']', i);
+    if (close < 0) return null;
+    i = _skipSpaces(text, close + 1);
+  }
+  if (i >= text.length || text[i] != '{') return null;
+  return _balancedArg(text, i)?.$2;
+}
+
+/// Index just past a `\def`-family declaration's body, given [from] just
+/// after the keyword; null when the declaration is too malformed to safely
+/// extract.
+int? _readDefEnd(String text, int from) {
+  final afterName = _readMacroName(text, _skipSpaces(text, from), allowGroup: false);
+  if (afterName == null) return null;
+  // Parameter text (`#1#2...`, or delimiter tokens) runs up to the body's
+  // opening brace; TeX doesn't allow an unescaped `{` inside it.
+  var i = afterName;
+  while (i < text.length && text[i] != '{') {
+    i += text[i] == r'\' ? 2 : 1;
+  }
+  if (i >= text.length) return null;
+  return _balancedArg(text, i)?.$2;
+}
+
+/// Consumes the macro name a declaration binds: either a `{...}`-wrapped
+/// name (`\newcommand{\foo}`) or a single control sequence
+/// (`\newcommand\foo`, always the case for `\def`). Returns the index just
+/// past it, or null if [at] isn't the start of either form.
+int? _readMacroName(String text, int at, {bool allowGroup = true}) {
+  if (allowGroup && at < text.length && text[at] == '{') {
+    return _balancedArg(text, at)?.$2;
+  }
+  if (at >= text.length || text[at] != r'\') return null;
+  var i = at + 1;
+  if (i < text.length && _isAsciiLetter(text[i])) {
+    while (i < text.length && _isAsciiLetter(text[i])) {
+      i++;
+    }
+  } else if (i < text.length) {
+    i++; // A single-character control symbol, e.g. `\@`.
+  }
+  return i;
+}
+
+bool _isAsciiLetter(String ch) {
+  final code = ch.codeUnitAt(0);
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+int _skipSpaces(String text, int at) {
+  var i = at;
+  while (i < text.length &&
+      (text[i] == ' ' || text[i] == '\t' || text[i] == '\n')) {
+    i++;
+  }
+  return i;
+}
+
+/// A parsed `\newcommand`/`\def`-family declaration, kept structured (as
+/// opposed to [extractMacroPreamble]'s flat text) so [_expandTextMacros] can
+/// substitute `#1`..`#9` itself.
+class MacroDefinition {
+  const MacroDefinition(this.name, this.argCount, this.body);
+
+  /// Without the leading backslash.
+  final String name;
+  final int argCount;
+  final String body;
+}
+
+/// Every macro declared anywhere in [text] (already comment-stripped), in
+/// source order — later declarations of the same name win, matching how
+/// [extractMacroPreamble] normalizes redefinition to `\providecommand`.
+Map<String, MacroDefinition> _parseMacroDefs(String text) {
+  final defs = <String, MacroDefinition>{};
+  for (final match in _macroDefKeyword.allMatches(text)) {
+    final keyword = match.group(1)!;
+    final def = keyword.endsWith('def')
+        ? _parseDefDeclaration(text, match.end)
+        : _parseNewcommandDeclaration(text, match.end);
+    if (def != null) defs[def.name] = def;
+  }
+  return defs;
+}
+
+MacroDefinition? _parseNewcommandDeclaration(String text, int from) {
+  var i = _skipSpaces(text, from);
+  if (i < text.length && text[i] == '*') i = _skipSpaces(text, i + 1);
+  final name = _readMacroNameSpan(text, i);
+  if (name == null) return null;
+  i = _skipSpaces(text, name.$2);
+  var argCount = 0;
+  for (var group = 0; group < 2 && i < text.length && text[i] == '['; group++) {
+    final close = text.indexOf(']', i);
+    if (close < 0) return null;
+    if (group == 0) {
+      argCount = int.tryParse(text.substring(i + 1, close).trim()) ?? 0;
+    }
+    i = _skipSpaces(text, close + 1);
+  }
+  if (i >= text.length || text[i] != '{') return null;
+  final body = _balancedArg(text, i);
+  return body == null ? null : MacroDefinition(name.$1, argCount, body.$1);
+}
+
+MacroDefinition? _parseDefDeclaration(String text, int from) {
+  final name = _readMacroNameSpan(text, _skipSpaces(text, from), allowGroup: false);
+  if (name == null) return null;
+  var i = name.$2;
+  var argCount = 0;
+  while (i < text.length && text[i] != '{') {
+    if (text[i] == '#') argCount++;
+    i += text[i] == r'\' ? 2 : 1;
+  }
+  if (i >= text.length) return null;
+  final body = _balancedArg(text, i);
+  return body == null ? null : MacroDefinition(name.$1, argCount, body.$1);
+}
+
+/// Like [_readMacroName], but also returns the name itself (without its
+/// leading backslash).
+(String, int)? _readMacroNameSpan(String text, int at, {bool allowGroup = true}) {
+  if (allowGroup && at < text.length && text[at] == '{') {
+    final arg = _balancedArg(text, at);
+    if (arg == null) return null;
+    final raw = arg.$1.trim();
+    return (raw.startsWith(r'\') ? raw.substring(1) : raw, arg.$2);
+  }
+  final end = _readMacroName(text, at, allowGroup: false);
+  return end == null ? null : (text.substring(at + 1, end), end);
+}
+
+/// Expands custom macros in plain prose text — [extractMacroPreamble]
+/// covers macros used *inside* math (RaTeX's own expander handles those
+/// natively), but text outside of math needs its own, simpler pass: a
+/// paper's own shorthand (`\fn{name}`, `\ghlink{path}{text}`, and the like)
+/// is common in real-world LaTeX and would otherwise show up as raw source.
+///
+/// This is intentionally not a full TeX macro engine: no delimited
+/// parameters, no conditionals, no expansion inside an argument before it's
+/// substituted. Bounded recursion (macros expanding to other macros) keeps
+/// a definition cycle from looping forever.
+String _expandTextMacros(String text, Map<String, MacroDefinition> macros, [int depth = 0]) {
+  if (macros.isEmpty || depth > 8 || !text.contains(r'\')) return text;
+  final out = StringBuffer();
+  var i = 0;
+  var changed = false;
+  // True immediately after writing an unexpanded control word (`\foo`, left
+  // as-is because it isn't one of [macros]) or a macro expansion whose body
+  // itself ends in one. Naive string concatenation loses TeX's token
+  // boundaries: real TeX keeps a macro's expansion as tokens distinct from
+  // whatever preceded it, but re-lexing the concatenated *text* would merge
+  // a following letter into that control word (`\to` + an expansion of "b"
+  // reads back as the single, undefined control word `\tob`). An empty
+  // group after the control word blocks that merge without changing what
+  // it means.
+  var afterBareControlWord = false;
+  while (i < text.length) {
+    if (text[i] != r'\') {
+      out.write(text[i]);
+      afterBareControlWord = false;
+      i++;
+      continue;
+    }
+    final name = RegExp(r'[a-zA-Z]+').matchAsPrefix(text, i + 1)?.group(0);
+    final macro = name == null ? null : macros[name];
+    if (macro == null) {
+      // Not a declared macro (a control symbol like `\%`, or a real
+      // KaTeX/RaTeX command): copy the whole control word verbatim.
+      final end = name == null ? i + 1 : i + 1 + name.length;
+      out.write(text.substring(i, end));
+      afterBareControlWord = name != null;
+      i = end;
+      continue;
+    }
+    var j = i + 1 + name!.length;
+    final args = <String>[];
+    for (var a = 0; a < macro.argCount; a++) {
+      j = _skipSpaces(text, j);
+      final arg = j < text.length && text[j] == '{' ? _balancedArg(text, j) : null;
+      if (arg == null) break;
+      args.add(arg.$1);
+      j = arg.$2;
+    }
+    if (args.length != macro.argCount) {
+      // A required argument is missing (e.g. `\foo` used with no braces
+      // where `\foo` needs one): leave the name as literal text rather
+      // than guessing.
+      out.write(r'\');
+      out.write(name);
+      afterBareControlWord = true;
+      i += 1 + name.length;
+      continue;
+    }
+    // A single pass over the original body, substituting #1..#9 from
+    // [args]: sequential replaceAll calls would risk re-matching a "#N"
+    // that an earlier substitution's own argument value happened to
+    // contain.
+    final body = macro.body.replaceAllMapped(RegExp(r'#([1-9])'), (m) {
+      final index = int.parse(m.group(1)!) - 1;
+      return index < args.length ? args[index] : m.group(0)!;
+    });
+    if (afterBareControlWord && body.isNotEmpty && _isAsciiLetter(body[0])) {
+      out.write('{}');
+    }
+    out.write(body);
+    afterBareControlWord = RegExp(r'\\[a-zA-Z]+$').hasMatch(body);
+    i = j;
+    changed = true;
+  }
+  final result = out.toString();
+  return changed ? _expandTextMacros(result, macros, depth + 1) : result;
 }

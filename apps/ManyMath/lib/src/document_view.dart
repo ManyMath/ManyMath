@@ -5,9 +5,19 @@ import 'package:ratex_flutter/ratex_flutter.dart';
 import 'latex_document.dart';
 
 class DocumentView extends StatelessWidget {
-  const DocumentView({required this.blocks, this.zoom = 1, super.key});
+  const DocumentView({
+    required this.blocks,
+    this.macroPreamble = '',
+    this.zoom = 1,
+    super.key,
+  });
 
   final List<DocBlock> blocks;
+
+  /// `\providecommand`/`\def` statements collected from the whole document
+  /// (see `extractMacroPreamble`), prepended to every formula so RaTeX's
+  /// macro expander can resolve the paper's own macros.
+  final String macroPreamble;
   final double zoom;
 
   double get _bodySize => 16 * zoom;
@@ -84,7 +94,7 @@ class DocumentView extends StatelessWidget {
     bool displayMode = true,
   }) {
     return RatexMath(
-      latex,
+      macroPreamble + latex,
       fontSize: fontSize,
       displayMode: displayMode,
       color: const Color(0xFF18201C),
@@ -216,28 +226,64 @@ class DocumentView extends StatelessWidget {
               for (final (index, item) in block.items.indexed)
                 Padding(
                   padding: EdgeInsets.only(bottom: 4 * zoom),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      SizedBox(
-                        width: 28 * zoom,
-                        child: Text(
-                          block.ordered ? '${index + 1}.' : '•',
-                          textAlign: TextAlign.right,
-                        ),
-                      ),
-                      SizedBox(width: 8 * zoom),
-                      Expanded(
-                        child: Text.rich(
+                  child: block.style == ListStyle.description
+                      ? Text.rich(
                           TextSpan(
                             children: _inlineSpans(context, item, _bodySize),
                           ),
+                        )
+                      : Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            SizedBox(
+                              width: 28 * zoom,
+                              child: Text(
+                                block.style == ListStyle.numbered
+                                    ? '${index + 1}.'
+                                    : '•',
+                                textAlign: TextAlign.right,
+                              ),
+                            ),
+                            SizedBox(width: 8 * zoom),
+                            Expanded(
+                              child: Text.rich(
+                                TextSpan(
+                                  children: _inlineSpans(
+                                    context,
+                                    item,
+                                    _bodySize,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ],
-                  ),
                 ),
             ],
+          ),
+        );
+      case CodeBlock():
+        return Padding(
+          padding: EdgeInsets.symmetric(vertical: 8 * zoom),
+          child: Container(
+            width: double.infinity,
+            padding: EdgeInsets.all(12 * zoom),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF2F4F3),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: const Color(0xFFD9DEDB)),
+            ),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Text(
+                block.code,
+                style: TextStyle(
+                  fontFamily: 'ui-monospace',
+                  fontSize: _bodySize * 0.85,
+                  height: 1.4,
+                ),
+              ),
+            ),
           ),
         );
     }
@@ -256,6 +302,8 @@ class DocumentView extends StatelessWidget {
             style: TextStyle(
               fontWeight: span.bold ? FontWeight.w700 : null,
               fontStyle: span.italic ? FontStyle.italic : null,
+              fontFamily: span.monospace ? 'ui-monospace' : null,
+              decoration: span.underline ? TextDecoration.underline : null,
             ),
           ),
           InlineMath() => WidgetSpan(

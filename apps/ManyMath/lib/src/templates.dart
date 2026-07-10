@@ -117,6 +117,3 @@ const documentTemplates = <DocumentTemplate>[
   problemSetTemplate,
   lectureNotesTemplate,
 ];
-
-/// The template used only when no local document store exists yet.
-const welcomeTemplate = articleTemplate;

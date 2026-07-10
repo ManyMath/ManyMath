@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:manyui/manyui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'templates.dart';
+import 'papers.dart';
 
 @immutable
 class ManyMathDocument {
@@ -98,7 +98,7 @@ class DocumentStore extends ChangeNotifier {
   DocumentStore._(this._preferences, this._documents, this._now);
 
   /// Creates a synchronous, plugin-free store for widget tests and previews.
-  /// Passing null [documents] seeds the welcome document; passing an empty
+  /// Passing null [documents] seeds the bundled papers; passing an empty
   /// iterable deliberately starts with no documents.
   factory DocumentStore.inMemory({
     Iterable<ManyMathDocument>? documents,
@@ -107,7 +107,7 @@ class DocumentStore extends ChangeNotifier {
     final clock = now ?? DateTime.now;
     return DocumentStore._(
       _MemoryDocumentPreferences(),
-      documents?.toList() ?? <ManyMathDocument>[_welcomeDocument(clock())],
+      documents?.toList() ?? _seedDocuments(clock()),
       clock,
     );
   }
@@ -166,7 +166,7 @@ class DocumentStore extends ChangeNotifier {
     }
 
     if (raw == null || (needsRepair && documents.isEmpty)) {
-      documents.add(_welcomeDocument((now ?? DateTime.now)()));
+      documents.addAll(_seedDocuments((now ?? DateTime.now)()));
     }
 
     if (needsRepair && raw != null) {
@@ -183,13 +183,17 @@ class DocumentStore extends ChangeNotifier {
     return store;
   }
 
-  static ManyMathDocument _welcomeDocument(DateTime timestamp) {
-    return ManyMathDocument(
-      id: '${timestamp.microsecondsSinceEpoch.toRadixString(36)}-seed',
-      name: 'The Basel Problem',
-      source: welcomeTemplate.source,
-      updatedAt: timestamp,
-    );
+  static List<ManyMathDocument> _seedDocuments(DateTime timestamp) {
+    return <ManyMathDocument>[
+      for (var index = 0; index < papers.length; index++)
+        ManyMathDocument(
+          id: '${timestamp.microsecondsSinceEpoch.toRadixString(36)}'
+              '-seed-$index',
+          name: papers[index].name,
+          source: papers[index].source,
+          updatedAt: timestamp,
+        ),
+    ];
   }
 
   List<ManyMathDocument> get documents =>

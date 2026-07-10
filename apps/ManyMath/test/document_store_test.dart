@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manymath/src/document_store.dart';
+import 'package:manymath/src/papers.dart';
 import 'package:manyui/manyui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -14,23 +15,26 @@ void main() {
 
   test('in-memory store is synchronous to construct and plugin-free', () async {
     final store = DocumentStore.inMemory(now: () => DateTime.utc(2026));
-    final document = store.documents.single;
+    final document = store.documents.first;
     expect(store.updateSource(document.id, 'local edit'), isTrue);
     await store.flush();
     expect(store.byId(document.id)?.source, 'local edit');
   });
 
-  test(
-    'a fresh store creates and durably saves the welcome document',
-    () async {
-      final store = await DocumentStore.load(now: () => DateTime.utc(2026));
-      expect(store.documents, hasLength(1));
-      expect(store.documents.single.name, 'The Basel Problem');
+  test('a fresh store creates and durably saves the bundled papers', () async {
+    final store = await DocumentStore.load(now: () => DateTime.utc(2026));
+    expect(store.documents, hasLength(papers.length));
+    expect(
+      store.documents.map((document) => document.name),
+      papers.map((paper) => paper.name),
+    );
 
-      final reloaded = await DocumentStore.load();
-      expect(reloaded.documents.single.source, store.documents.single.source);
-    },
-  );
+    final reloaded = await DocumentStore.load();
+    expect(
+      reloaded.documents.map((document) => document.source),
+      store.documents.map((document) => document.source),
+    );
+  });
 
   test('rapid source saves are ordered and the last edit wins', () async {
     var tick = 0;
@@ -102,7 +106,7 @@ void main() {
   });
 
   test(
-    'unreadable data is backed up before a welcome document is saved',
+    'unreadable data is backed up before the bundled papers are saved',
     () async {
       const raw = 'not json at all {';
       SharedPreferences.setMockInitialValues(<String, Object>{
@@ -110,7 +114,7 @@ void main() {
       });
 
       final store = await DocumentStore.load();
-      expect(store.documents, hasLength(1));
+      expect(store.documents, hasLength(papers.length));
       expect(store.recoveryPayload, raw);
       await store.clearRecoveryPayload();
       expect(store.recoveryPayload, isNull);
@@ -133,14 +137,16 @@ void main() {
     final store = await DocumentStore.load(
       now: () => DateTime.utc(2026, 1, 1, 0, 0, tick++),
     );
-    final welcomeId = store.documents.single.id;
+    final seedIds = store.documents.map((document) => document.id).toList();
     final original = store.create(name: '  A  ', source: 'source');
     expect(original.name, 'A');
     expect(store.rename(original.id, '  B  '), isTrue);
     final copy = store.duplicate(original.id)!;
     expect(copy.name, 'Copy of B');
     expect(store.remove(original.id), isTrue);
-    expect(store.remove(welcomeId), isTrue);
+    for (final id in seedIds) {
+      expect(store.remove(id), isTrue);
+    }
 
     store.splitRatio = 0.99;
     store.themeMode = MThemeMode.dark;

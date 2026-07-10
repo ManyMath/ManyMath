@@ -29,9 +29,4 @@ void main() {
       }
     },
   );
-
-  test('welcome template remains the article sample', () {
-    expect(welcomeTemplate, same(articleTemplate));
-    expect(welcomeTemplate.source, contains('Basel Problem'));
-  });
 }

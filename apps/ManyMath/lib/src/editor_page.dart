@@ -60,6 +60,7 @@ class _EditorPageState extends State<EditorPage>
       TextSelectionGestureDetectorBuilder(delegate: this);
 
   List<DocBlock> _blocks = const <DocBlock>[];
+  String _macroPreamble = '';
   List<FormulaIssue> _issues = const <FormulaIssue>[];
   ({int words, int formulas}) _counts = (words: 0, formulas: 0);
   EditorSurface _compactSurface = EditorSurface.source;
@@ -180,11 +181,15 @@ class _EditorPageState extends State<EditorPage>
     if (!_engineReady) return;
     final stopwatch = Stopwatch()..start();
     final blocks = parseLatexDocument(_source.text);
-    final issues = (widget.formulaChecker ?? checkFormulas)(blocks);
+    final macroPreamble = extractMacroPreamble(_source.text);
+    final issues = widget.formulaChecker != null
+        ? widget.formulaChecker!(blocks)
+        : checkFormulas(blocks, macroPreamble: macroPreamble);
     stopwatch.stop();
     setState(() {
       if (issues.isNotEmpty && _issues.isEmpty) _problemsExpanded = true;
       _blocks = blocks;
+      _macroPreamble = macroPreamble;
       _issues = issues;
       _counts = countDocument(blocks);
       _changesPending = false;
@@ -763,6 +768,7 @@ class _EditorPageState extends State<EditorPage>
   Widget _buildPreviewPane() {
     return _PreviewPane(
       blocks: _blocks,
+      macroPreamble: _macroPreamble,
       zoom: _previewZoom,
       engineLoading: _engineLoading,
       engineError: _engineError,
@@ -899,6 +905,7 @@ class _PaneHeader extends StatelessWidget {
 class _PreviewPane extends StatelessWidget {
   const _PreviewPane({
     required this.blocks,
+    required this.macroPreamble,
     required this.zoom,
     required this.engineLoading,
     required this.engineError,
@@ -909,6 +916,7 @@ class _PreviewPane extends StatelessWidget {
   });
 
   final List<DocBlock> blocks;
+  final String macroPreamble;
   final double zoom;
   final bool engineLoading;
   final String? engineError;
@@ -981,7 +989,11 @@ class _PreviewPane extends StatelessWidget {
                 ? const Center(
                     child: MLoadingState(message: 'Loading typesetting engine'),
                   )
-                : DocumentView(blocks: blocks, zoom: zoom),
+                : DocumentView(
+                    blocks: blocks,
+                    macroPreamble: macroPreamble,
+                    zoom: zoom,
+                  ),
           ),
         ],
       ),

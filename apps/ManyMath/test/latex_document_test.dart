@@ -34,6 +34,41 @@ Text after \[ \sqrt{2} \] and beyond.
       expect(math.latex, endsWith(r'\end{align}'));
     });
 
+    test('captures lstlisting as a verbatim CodeBlock', () {
+      final blocks = parseLatexDocument(r'''
+\begin{lstlisting}[language=Rust, caption=Demo]
+fn main() { // 50% done
+    println!("hi");
+}
+\end{lstlisting}
+''');
+      final code = blocks.whereType<CodeBlock>().single;
+      expect(code.code, 'fn main() { // 50% done\n    println!("hi");\n}');
+    });
+
+    test('captures plain verbatim, preserving blank lines', () {
+      final blocks = parseLatexDocument(r'''
+\begin{verbatim}
+first
+
+third
+\end{verbatim}
+''');
+      final code = blocks.whereType<CodeBlock>().single;
+      expect(code.code, 'first\n\nthird');
+    });
+
+    test('does not mistake a leading `[` in code for lstlisting options', () {
+      final blocks = parseLatexDocument(r'''
+\begin{lstlisting}
+[derive(Clone)]
+struct Foo;
+\end{lstlisting}
+''');
+      final code = blocks.whereType<CodeBlock>().single;
+      expect(code.code, '[derive(Clone)]\nstruct Foo;');
+    });
+
     test('extracts the document body and \\maketitle metadata', () {
       final blocks = parseLatexDocument(r'''
 \documentclass{article}
@@ -94,12 +129,99 @@ Ignored trailer.
 \end{enumerate}
 ''');
       final bullets = blocks[0] as ListBlock;
-      expect(bullets.ordered, isFalse);
+      expect(bullets.style, ListStyle.bullet);
       expect(bullets.items, hasLength(2));
       expect(bullets.items[0].whereType<InlineMath>().single.latex, 'x^2');
       final numbered = blocks[1] as ListBlock;
-      expect(numbered.ordered, isTrue);
+      expect(numbered.style, ListStyle.numbered);
     });
+
+    test('parses description, keeping the required label bolded', () {
+      final blocks = parseLatexDocument(r'''
+\begin{description}
+  \item[Source] file.rs:10
+  \item[Spec] Does the thing
+\end{description}
+''');
+      final list = blocks.single as ListBlock;
+      expect(list.style, ListStyle.description);
+      expect(list.items, hasLength(2));
+      final first = list.items[0];
+      final label = first.first as TextRun;
+      expect(label.text, 'Source');
+      expect(label.bold, isTrue);
+      final text = first.map((s) => (s as TextRun).text).join();
+      expect(text, contains('file.rs:10'));
+    });
+
+    test('expands the paper\'s own prose macros', () {
+      final blocks = parseLatexDocument(r'''
+\newcommand{\src}[1]{\texttt{#1}}
+\begin{document}
+See \src{crypto-ops.c} for details.
+\end{document}
+''');
+      final paragraph = blocks.single as ParagraphBlock;
+      final code = paragraph.spans.whereType<TextRun>().firstWhere(
+        (s) => s.text == 'crypto-ops.c',
+      );
+      expect(code.monospace, isTrue);
+    });
+
+    test('macro-heavy content never throws and reads as plain prose', () {
+      final blocks = parseLatexDocument(r'''
+\newcommand{\ghlink}[2]{\href{#1}{#2}}
+\newcommand{\prlink}[2]{PR \##1: #2}
+\begin{document}
+\ghlink{https://x}{fe\_batch\_invert} was touched in \prlink{10111}{Batch inverse}.
+\end{document}
+''');
+      final paragraph = blocks.single as ParagraphBlock;
+      final text = paragraph.spans
+          .whereType<TextRun>()
+          .map((s) => s.text)
+          .join();
+      expect(text, contains('fe_batch_invert'));
+      expect(text, contains('PR #10111: Batch inverse'));
+      expect(text, isNot(contains(r'\ghlink')));
+      expect(text, isNot(contains('https://x')));
+    });
+
+    test('a macro cycle does not loop forever', () {
+      final blocks = parseLatexDocument(r'''
+\newcommand{\a}{\b}
+\newcommand{\b}{\a}
+\begin{document}
+Value: \a done.
+\end{document}
+''');
+      final paragraph = blocks.single as ParagraphBlock;
+      expect(
+        paragraph.spans.whereType<TextRun>().map((s) => s.text).join(),
+        contains('done.'),
+      );
+    });
+
+    test(
+      'a control word does not swallow a following expansion (\\to + b)',
+      () {
+        // Regression: \verifyO expands to the bare letter "b"; naively
+        // concatenating it right after the real (unexpanded) \to would
+        // read back as the single undefined control word \tob.
+        final blocks = parseLatexDocument(r'''
+\newcommand{\verifyO}{b}
+\newcommand{\verifyIO}{\to\verifyO}
+\begin{document}
+Outputs \verifyIO here.
+\end{document}
+''');
+        final text = (blocks.single as ParagraphBlock).spans
+            .whereType<TextRun>()
+            .map((s) => s.text)
+            .join();
+        expect(text, isNot(contains(r'\tob')));
+      },
+    );
 
     test('strips comments but keeps escaped percent signs', () {
       final blocks = parseLatexDocument(
@@ -514,6 +636,104 @@ Three plain words here $x$ and $$y$$
       final spans = parseInline(r'Costs \$5 plus \$6.');
       expect(spans.whereType<InlineMath>(), isEmpty);
       expect((spans.single as TextRun).text, r'Costs $5 plus $6.');
+    });
+
+    test(r'\paragraph and \subparagraph are bold run-in headings', () {
+      final spans = parseInline(r'\paragraph{Problem} Something is wrong.');
+      expect(spans, hasLength(2));
+      final heading = spans.first as TextRun;
+      expect(heading.text, 'Problem');
+      expect(heading.bold, isTrue);
+      final body = spans.last as TextRun;
+      expect(body.text, contains('Something is wrong.'));
+      expect(body.bold, isFalse);
+    });
+
+    test(r'\texttt and \underline are styled text', () {
+      final tt = parseInline(r'\texttt{carrot_core}').single as TextRun;
+      expect(tt.text, 'carrot_core');
+      expect(tt.monospace, isTrue);
+
+      final ul = parseInline(r'\underline{sk}').single as TextRun;
+      expect(ul.text, 'sk');
+      expect(ul.underline, isTrue);
+    });
+
+    test(r'\gls shows its term unstyled', () {
+      final run = parseInline(r'\gls{monero-generators}').single as TextRun;
+      expect(run.text, 'monero-generators');
+      expect(run.bold, isFalse);
+      expect(run.monospace, isFalse);
+    });
+
+    test(r'\href shows only its second argument', () {
+      final spans = parseInline(r'See \href{https://example.com}{the docs}.');
+      final text = spans.whereType<TextRun>().map((s) => s.text).join();
+      expect(text, 'See the docs.');
+      expect(text, isNot(contains('example.com')));
+    });
+
+    test(r'\url is shown verbatim, unescaped, as monospace text', () {
+      final run = parseInline(r'\url{https://x.com/a_b%20c}').single as TextRun;
+      expect(run.text, r'https://x.com/a_b%20c');
+      expect(run.monospace, isTrue);
+    });
+
+    test(r'\textcolor shows only its second argument', () {
+      final spans = parseInline(r'\textcolor{red}{danger}');
+      final text = spans.whereType<TextRun>().map((s) => s.text).join();
+      expect(text, 'danger');
+    });
+  });
+
+  group('extractMacroPreamble', () {
+    test('normalizes \\newcommand and \\renewcommand to \\providecommand', () {
+      final preamble = extractMacroPreamble(r'''
+\newcommand{\Fq}{\mathbb{F}_q}
+\renewcommand{\epsilon}{\varepsilon}
+''');
+      expect(preamble, r'''
+\providecommand{\Fq}{\mathbb{F}_q}
+\providecommand{\epsilon}{\varepsilon}
+''');
+    });
+
+    test('keeps \\def as-is, including its parameter text', () {
+      final preamble = extractMacroPreamble(r'\def\foo#1#2{#1 + #2}');
+      expect(preamble, r'\def\foo#1#2{#1 + #2}' '\n');
+    });
+
+    test('preserves an optional-argument count and default', () {
+      final preamble = extractMacroPreamble(
+        r'\newcommand{\ip}[2]{\langle #1, #2 \rangle}',
+      );
+      expect(preamble, r'\providecommand{\ip}[2]{\langle #1, #2 \rangle}' '\n');
+    });
+
+    test('ignores commented-out declarations', () {
+      final preamble = extractMacroPreamble(
+        '% \\newcommand{\\hidden}{nope}\n\\newcommand{\\visible}{yes}',
+      );
+      expect(preamble, contains(r'\visible'));
+      expect(preamble, isNot(contains('hidden')));
+    });
+
+    test('ignores invocations of unrelated commands', () {
+      // \docsvlist is a call, not a declaration; only \do's own \def should
+      // be picked up.
+      final preamble = extractMacroPreamble(
+        r'\def\do#1{\csdef{#1}{\mathbb{#1}}}' '\n' r'\docsvlist{N,Z,Q}',
+      );
+      expect(preamble, r'\def\do#1{\csdef{#1}{\mathbb{#1}}}' '\n');
+    });
+
+    test('keeps unbraced macro names, e.g. \\newcommand\\foo{...}', () {
+      final preamble = extractMacroPreamble(r'\newcommand\foo{bar}');
+      expect(preamble, r'\providecommand\foo{bar}' '\n');
+    });
+
+    test('returns an empty string when there are no declarations', () {
+      expect(extractMacroPreamble(r'\section{Intro} $x^2$'), isEmpty);
     });
   });
 }

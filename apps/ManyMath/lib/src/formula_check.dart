@@ -33,8 +33,12 @@ class FormulaIssue {
   }
 }
 
-List<FormulaIssue> checkFormulas(List<DocBlock> blocks) {
+List<FormulaIssue> checkFormulas(
+  List<DocBlock> blocks, {
+  String macroPreamble = '',
+}) {
   final issues = <FormulaIssue>[];
+  final preambleUnits = macroPreamble.length;
 
   void check(
     String latex, {
@@ -43,10 +47,11 @@ List<FormulaIssue> checkFormulas(List<DocBlock> blocks) {
     int? end,
     List<int>? latexSourceMap,
   }) {
+    final combined = macroPreamble + latex;
     RatexException failure;
     try {
       Ratex.renderDisplayListSync(
-        latex,
+        combined,
         options: RatexOptions(displayMode: displayMode),
       );
       return;
@@ -62,15 +67,21 @@ List<FormulaIssue> checkFormulas(List<DocBlock> blocks) {
         failure.hasSpan &&
         latexSourceMap != null &&
         latexSourceMap.isNotEmpty) {
-      final unitStart = codeUnitForByte(latex, failure.start!);
-      final unitEnd = codeUnitForByte(latex, failure.end!);
-      errorStart = unitStart < latexSourceMap.length
-          ? latexSourceMap[unitStart]
-          : latexSourceMap.last + 1;
-      errorEnd = unitEnd > unitStart && unitEnd <= latexSourceMap.length
-          ? latexSourceMap[unitEnd - 1] + 1
-          : errorStart + 1;
-      if (errorEnd <= errorStart) errorEnd = errorStart + 1;
+      final unitStart = codeUnitForByte(combined, failure.start!) - preambleUnits;
+      final unitEnd = codeUnitForByte(combined, failure.end!) - preambleUnits;
+      // A negative offset means the failure is inside the synthesized macro
+      // preamble itself, not the formula the user can see and edit; leave
+      // the jump target null so the issue falls back to the block/span
+      // source span instead of pointing at text that isn't in the editor.
+      if (unitStart >= 0) {
+        errorStart = unitStart < latexSourceMap.length
+            ? latexSourceMap[unitStart]
+            : latexSourceMap.last + 1;
+        errorEnd = unitEnd > unitStart && unitEnd <= latexSourceMap.length
+            ? latexSourceMap[unitEnd - 1] + 1
+            : errorStart + 1;
+        if (errorEnd <= errorStart) errorEnd = errorStart + 1;
+      }
     }
     issues.add(
       FormulaIssue(
@@ -127,6 +138,8 @@ List<FormulaIssue> checkFormulas(List<DocBlock> blocks) {
             );
           }
         }
+      case CodeBlock():
+      // Verbatim text: nothing to check, RaTeX never sees it.
     }
   }
   return issues;
