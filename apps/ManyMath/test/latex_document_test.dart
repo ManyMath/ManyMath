@@ -69,6 +69,101 @@ struct Foo;
       expect(code.code, '[derive(Clone)]\nstruct Foo;');
     });
 
+    test('captures quote as an indented QuoteBlock', () {
+      final blocks = parseLatexDocument(r'''
+\begin{quote}
+\paragraph{Recommendation} Fix it.
+\end{quote}
+''');
+      final quote = blocks.whereType<QuoteBlock>().single;
+      final text = quote.spans.whereType<TextRun>().map((s) => s.text).join();
+      expect(text, contains('Recommendation'));
+      expect(text, contains('Fix it.'));
+    });
+
+    test('captures abstract as an Abstract heading plus a paragraph', () {
+      final blocks = parseLatexDocument(r'''
+\begin{document}
+\begin{abstract}
+This paper is about things.
+\end{abstract}
+\end{document}
+''');
+      final heading = blocks.whereType<HeadingBlock>().single;
+      expect(
+        (heading.spans.single as TextRun).text,
+        'Abstract',
+      );
+      final paragraph = blocks.whereType<ParagraphBlock>().single;
+      expect(
+        (paragraph.spans.single as TextRun).text,
+        contains('This paper is about things.'),
+      );
+    });
+
+    test(
+      'captures a theorem-like environment, resolving its \\label number',
+      () {
+        final blocks = parseLatexDocument(r'''
+\begin{document}
+\begin{definition}[Random Oracle]\label{def:ro}
+A function modeled as uniformly random.
+\end{definition}
+See \cref{def:ro}.
+\end{document}
+''');
+        final theorem = blocks.whereType<TheoremBlock>().single;
+        expect(theorem.noun, 'Definition');
+        expect(theorem.number, '1');
+        final title = theorem.title!.whereType<TextRun>().map((s) => s.text).join();
+        expect(title, 'Random Oracle');
+        final body = theorem.body.whereType<TextRun>().map((s) => s.text).join();
+        expect(body, contains('uniformly random'));
+
+        final crefText = blocks
+            .whereType<ParagraphBlock>()
+            .last
+            .spans
+            .whereType<TextRun>()
+            .map((s) => s.text)
+            .join();
+        expect(crefText, contains('definition 1'));
+      },
+    );
+
+    test('an unlabeled theorem environment shows no number', () {
+      final blocks = parseLatexDocument(r'''
+\begin{document}
+\begin{lemma}
+Unlabeled but still shown.
+\end{lemma}
+\end{document}
+''');
+      final theorem = blocks.whereType<TheoremBlock>().single;
+      expect(theorem.noun, 'Lemma');
+      expect(theorem.number, isNull);
+    });
+
+    test('recognizes abbreviated theorem environment names', () {
+      final blocks = parseLatexDocument(r'\begin{cor} A corollary. \end{cor}');
+      expect(blocks.whereType<TheoremBlock>().single.noun, 'Corollary');
+    });
+
+    test(r'\begin{proof} is captured with noun "Proof"', () {
+      final blocks = parseLatexDocument(r'''
+\begin{proof}
+Trivial.
+\end{proof}
+''');
+      final proof = blocks.whereType<TheoremBlock>().single;
+      expect(proof.noun, 'Proof');
+      expect(proof.number, isNull);
+      expect(
+        proof.body.whereType<TextRun>().map((s) => s.text).join(),
+        contains('Trivial.'),
+      );
+    });
+
     test('extracts the document body and \\maketitle metadata', () {
       final blocks = parseLatexDocument(r'''
 \documentclass{article}
@@ -691,6 +786,37 @@ Three plain words here $x$ and $$y$$
     test(r'\textsuperscript shows its content unstyled', () {
       final run = parseInline(r'\textsuperscript{1}').single as TextRun;
       expect(run.text, '1');
+    });
+
+    test('TeX accent commands become a base letter plus a combining mark', () {
+      // The base letter followed by a Unicode combining mark (\u0308 etc.),
+      // not a precomposed character -- visually identical once shaped, but
+      // spelled out with escapes here so the assertion is exact.
+      const diaeresis = '\u0308';
+      const acute = '\u0301';
+      const cedilla = '\u0327';
+      // Bare form (\"u) and braced form (\"{u}) both accent just the "u".
+      expect(
+        (parseInline(r'B\"unz').single as TextRun).text,
+        'Bu${diaeresis}nz',
+      );
+      expect(
+        (parseInline(r'B\"{u}nz').single as TextRun).text,
+        'Bu${diaeresis}nz',
+      );
+      // Acute, and a letter-named accent (cedilla), which requires braces.
+      expect((parseInline(r"S\'aez").single as TextRun).text, 'Sa${acute}ez');
+      expect(
+        (parseInline(r'Fran\c{c}ois').single as TextRun).text,
+        'Franc${cedilla}ois',
+      );
+    });
+
+    test(r'a nested command inside an accent argument is left alone', () {
+      // \"{\i} is LaTeX's dotless-i idiom; guessing at it would be wrong
+      // more often than not, so it's left as literal source instead.
+      final text = parseInline(r'\"{\i}').single as TextRun;
+      expect(text.text, r'\"{\i}');
     });
 
     test(r'\href shows only its second argument', () {

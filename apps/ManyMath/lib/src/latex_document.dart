@@ -112,6 +112,33 @@ final class BibliographyBlock extends DocBlock {
   final List<BibliographyEntry> entries;
 }
 
+/// A `quote`/`quotation` environment: shown indented, set off from the
+/// surrounding prose.
+final class QuoteBlock extends DocBlock {
+  const QuoteBlock(this.spans);
+
+  final List<DocInline> spans;
+}
+
+/// A `definition`/`theorem`/`lemma`/... environment (see
+/// [_theoremEnvironmentNouns]). [number] is null when no `\label` inside
+/// the environment could be resolved to one — this parser doesn't count
+/// these environments independently of a `\label` referencing them, so an
+/// unlabeled instance is shown without a number rather than a guessed one.
+final class TheoremBlock extends DocBlock {
+  const TheoremBlock({
+    required this.noun,
+    this.number,
+    this.title,
+    required this.body,
+  });
+
+  final String noun;
+  final String? number;
+  final List<DocInline>? title;
+  final List<DocInline> body;
+}
+
 /// One run of inline content inside a paragraph, heading, or list item.
 sealed class DocInline {
   const DocInline();
@@ -170,6 +197,35 @@ const _mathEnvironments = {
 /// with [_verbatimEnvironmentRe] above, which shields their `%` characters
 /// from comment-stripping.
 const _codeEnvironments = {'lstlisting', 'verbatim', 'Verbatim', 'minted'};
+
+/// `amsthm`-style theorem environments captured as a [TheoremBlock], mapped
+/// to the noun their number is announced with. Deliberately only the
+/// standard amsthm names: a paper's own `\newenvironment`-based theorem
+/// boxes (built on `mdframed`/`framed` rather than amsthm) have too much
+/// custom structure to approximate safely, so those are left alone rather
+/// than guessed at.
+const _theoremEnvironmentNouns = {
+  'definition': 'Definition',
+  'defn': 'Definition',
+  'theorem': 'Theorem',
+  'thm': 'Theorem',
+  'lemma': 'Lemma',
+  'lem': 'Lemma',
+  'corollary': 'Corollary',
+  'cor': 'Corollary',
+  'proposition': 'Proposition',
+  'prop': 'Proposition',
+  'remark': 'Remark',
+  'rem': 'Remark',
+  'claim': 'Claim',
+  'observation': 'Observation',
+  'example': 'Example',
+  // \begin{proof} is unnumbered even when this map's general machinery
+  // finds a \label inside it (rare) — see the noun == 'Proof' special case
+  // in document_view.dart, which italicizes the label and appends a QED
+  // mark instead of bolding a number.
+  'proof': 'Proof',
+};
 
 /// What `\ref`/`\cref`/`\Cref` print for one `\label`: a resolved number
 /// (`3.2`) and the noun cleveref would use (`section`, `definition`, ...).
@@ -577,6 +633,106 @@ List<DocBlock> parseLatexDocument(String source) {
           i = next;
           continue;
         }
+        if (name == 'quote' || name == 'quotation') {
+          flushParagraph();
+          final trimmed = body.trim();
+          if (trimmed.isNotEmpty) {
+            final start = env.end + (body.length - body.trimLeft().length);
+            blocks.add(
+              QuoteBlock(
+                parseInline(
+                  trimmed,
+                  macros: macros,
+                  labels: labels,
+                  citations: citations,
+                  sourceMap: map.sublist(start, start + trimmed.length),
+                ),
+              ),
+            );
+          }
+          i = next;
+          continue;
+        }
+        if (name == 'abstract') {
+          flushParagraph();
+          blocks.add(const HeadingBlock(2, [TextRun('Abstract', bold: true)]));
+          final trimmed = body.trim();
+          if (trimmed.isNotEmpty) {
+            final start = env.end + (body.length - body.trimLeft().length);
+            blocks.add(
+              ParagraphBlock(
+                parseInline(
+                  trimmed,
+                  macros: macros,
+                  labels: labels,
+                  citations: citations,
+                  sourceMap: map.sublist(start, start + trimmed.length),
+                ),
+              ),
+            );
+          }
+          i = next;
+          continue;
+        }
+        final theoremNoun = _theoremEnvironmentNouns[name];
+        if (theoremNoun != null) {
+          flushParagraph();
+          var theoremBody = body;
+          var theoremBodyStart = env.end;
+          // An optional [Title], e.g. \begin{definition}[Random Oracle].
+          List<DocInline>? title;
+          if (theoremBody.startsWith('[')) {
+            final close = theoremBody.indexOf(']');
+            if (close >= 0) {
+              final titleText = theoremBody.substring(1, close);
+              final titleStart = theoremBodyStart + 1;
+              title = parseInline(
+                titleText,
+                macros: macros,
+                labels: labels,
+                citations: citations,
+                sourceMap: map.sublist(
+                  titleStart,
+                  titleStart + titleText.length,
+                ),
+              );
+              theoremBody = theoremBody.substring(close + 1);
+              theoremBodyStart += close + 1;
+            }
+          }
+          // This parser doesn't count theorem environments on its own (see
+          // TheoremBlock) — it looks up whatever number \label/\cref
+          // already assigned the first \label found inside, so the two
+          // agree without a second counting scheme to keep in sync.
+          String? number;
+          final labelMatch = RegExp(
+            r'\\label\{([^}]*)\}',
+          ).firstMatch(theoremBody);
+          if (labelMatch != null) {
+            number = labels[labelMatch.group(1)]?.number;
+          }
+          final trimmed = theoremBody.trim();
+          final start =
+              theoremBodyStart + (theoremBody.length - theoremBody.trimLeft().length);
+          blocks.add(
+            TheoremBlock(
+              noun: theoremNoun,
+              number: number,
+              title: title,
+              body: trimmed.isEmpty
+                  ? const []
+                  : parseInline(
+                      trimmed,
+                      macros: macros,
+                      labels: labels,
+                      citations: citations,
+                      sourceMap: map.sublist(start, start + trimmed.length),
+                    ),
+            ),
+          );
+          i = next;
+          continue;
+        }
       }
       // Unknown or unterminated environment: fall through as text.
     }
@@ -805,6 +961,33 @@ List<DocInline> parseInline(
         }
       }
     }
+    // TeX accent commands (\'e, \"{u}, \c{c}, ...): approximated with a
+    // Unicode combining mark placed after the base letter, which text
+    // shaping renders merged with it — simpler and more general than a
+    // lookup table of every accent/letter combination, and covers letters
+    // this parser has never seen.
+    if (source.startsWith(r'\', i)) {
+      final marker = i + 1 < source.length ? source[i + 1] : null;
+      final symbolMark = marker == null ? null : _accentSymbolMarks[marker];
+      final letterMark =
+          symbolMark == null &&
+              marker != null &&
+              i + 2 < source.length &&
+              source[i + 2] == '{'
+          ? _accentLetterMarks[marker]
+          : null;
+      final mark = symbolMark ?? letterMark;
+      if (mark != null) {
+        final based = _accentBase(source, i + 2);
+        if (based != null) {
+          final content = based.$1;
+          run.write(content[0] + mark + content.substring(1));
+          i = based.$2;
+          continue;
+        }
+      }
+    }
+
     // \url and \path's arguments are verbatim (LaTeX doesn't interpret `_`,
     // `%`, etc. inside them), so they're taken as-is rather than
     // recursively parsed.
@@ -977,6 +1160,11 @@ List<DocInline> parseInline(
         for (final entry in block.entries) {
           countSpans(entry.spans);
         }
+      case QuoteBlock():
+        countSpans(block.spans);
+      case TheoremBlock():
+        if (block.title != null) countSpans(block.title!);
+        countSpans(block.body);
     }
   }
   return (words: words, formulas: formulas);
@@ -1287,6 +1475,46 @@ int? _readMacroName(String text, int at, {bool allowGroup = true}) {
 bool _isAsciiLetter(String ch) {
   final code = ch.codeUnitAt(0);
   return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+/// Single-symbol TeX accent commands (`\'e`, `\"{u}`, ...), mapped to the
+/// Unicode combining mark that reproduces them.
+const _accentSymbolMarks = {
+  '`': '̀', // grave
+  "'": '́', // acute
+  '^': '̂', // circumflex
+  '"': '̈', // diaeresis/umlaut
+  '~': '̃', // tilde
+  '=': '̄', // macron
+  '.': '̇', // dot above
+};
+
+/// Letter-named TeX accent commands (`\c{c}`, `\v{s}`, ...), which (unlike
+/// the symbol ones above) always take a braced argument — otherwise `\v`
+/// couldn't be told apart from the start of `\vspace`.
+const _accentLetterMarks = {
+  'c': '̧', // cedilla
+  'v': '̌', // caron
+  'H': '̋', // double acute
+  'k': '̨', // ogonek
+  'r': '̊', // ring above
+  'd': '̣', // dot below
+  'u': '̆', // breve
+  'b': '̱', // macron below
+};
+
+/// The text an accent command applies to: `{...}`-wrapped (`\"{u}`) or a
+/// single bare character (`\"u`). Declining a nested command (`\"{\i}`,
+/// LaTeX's dotless-i idiom) rather than guessing at it keeps this honest —
+/// the accent command is left as literal text instead.
+(String, int)? _accentBase(String source, int at) {
+  if (at >= source.length) return null;
+  if (source[at] == '{') {
+    final arg = _balancedArg(source, at);
+    if (arg == null || arg.$1.isEmpty || arg.$1.startsWith(r'\')) return null;
+    return (arg.$1, arg.$2);
+  }
+  return _isAsciiLetter(source[at]) ? (source[at], at + 1) : null;
 }
 
 int _skipSpaces(String text, int at) {

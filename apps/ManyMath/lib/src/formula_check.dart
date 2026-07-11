@@ -142,6 +142,11 @@ List<FormulaIssue> checkFormulas(
         for (final entry in block.entries) {
           checkInlines(entry.spans);
         }
+      case QuoteBlock():
+        checkInlines(block.spans);
+      case TheoremBlock():
+        if (block.title != null) checkInlines(block.title!);
+        checkInlines(block.body);
       case CodeBlock():
       // Verbatim text: nothing to check, RaTeX never sees it.
     }

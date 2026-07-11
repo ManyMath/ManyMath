@@ -27,62 +27,72 @@ class DocumentView extends StatelessWidget {
     return Semantics(
       container: true,
       label: 'Rendered document preview',
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 600;
-          final canvasPadding = compact
-              ? const EdgeInsets.symmetric(horizontal: 12, vertical: 20)
-              : const EdgeInsets.symmetric(horizontal: 24, vertical: 30);
-          final paperPadding = compact ? 24.0 : 48.0;
-          return ListView(
-            padding: canvasPadding,
-            children: <Widget>[
-              Center(
-                child: Container(
-                  constraints: const BoxConstraints(maxWidth: 760),
-                  padding: EdgeInsets.all(paperPadding),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFFFFF),
-                    borderRadius: BorderRadius.circular(3),
-                    border: Border.all(color: const Color(0xFFD9DEDB)),
-                    boxShadow: const <BoxShadow>[
-                      BoxShadow(
-                        color: Color(0x18000000),
-                        blurRadius: 14,
-                        offset: Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: DefaultTextStyle(
-                    style: TextStyle(
-                      color: const Color(0xFF18201C),
-                      fontSize: _bodySize,
-                      height: 1.55,
-                      fontFamily: 'Georgia',
-                      fontFamilyFallback: const <String>[
-                        'Times New Roman',
-                        'Noto Serif',
-                        'serif',
+      child: SelectableRegion(
+        // manyui's app shell (MWidgetsApp) is widgets-level, not
+        // MaterialApp, so it has no MaterialLocalizations ancestor —
+        // SelectionArea requires one and would throw. SelectableRegion is
+        // the same underlying mechanism without that requirement; the
+        // tradeoff is no built-in selection handles/context menu, just
+        // click-drag selection and the OS/browser copy shortcut.
+        selectionControls: emptyTextSelectionControls,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 600;
+            final canvasPadding = compact
+                ? const EdgeInsets.symmetric(horizontal: 12, vertical: 20)
+                : const EdgeInsets.symmetric(horizontal: 24, vertical: 30);
+            final paperPadding = compact ? 24.0 : 48.0;
+            return ListView(
+              padding: canvasPadding,
+              children: <Widget>[
+                Center(
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    padding: EdgeInsets.all(paperPadding),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFFFFF),
+                      borderRadius: BorderRadius.circular(3),
+                      border: Border.all(color: const Color(0xFFD9DEDB)),
+                      boxShadow: const <BoxShadow>[
+                        BoxShadow(
+                          color: Color(0x18000000),
+                          blurRadius: 14,
+                          offset: Offset(0, 4),
+                        ),
                       ],
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[
-                        if (blocks.isEmpty)
-                          Text(
-                            'No rendered content',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: const Color(0xFF64716B)),
-                          ),
-                        for (final block in blocks) _buildBlock(context, block),
-                      ],
+                    child: DefaultTextStyle(
+                      style: TextStyle(
+                        color: const Color(0xFF18201C),
+                        fontSize: _bodySize,
+                        height: 1.55,
+                        fontFamily: 'Georgia',
+                        fontFamilyFallback: const <String>[
+                          'Times New Roman',
+                          'Noto Serif',
+                          'serif',
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          if (blocks.isEmpty)
+                            Text(
+                              'No rendered content',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: const Color(0xFF64716B)),
+                            ),
+                          for (final block in blocks)
+                            _buildBlock(context, block),
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
-          );
-        },
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -319,6 +329,68 @@ class DocumentView extends StatelessWidget {
             ],
           ),
         );
+      case QuoteBlock():
+        return Padding(
+          padding: EdgeInsets.symmetric(vertical: 6 * zoom),
+          child: Container(
+            padding: EdgeInsets.only(left: 16 * zoom),
+            decoration: const BoxDecoration(
+              border: Border(
+                left: BorderSide(color: Color(0xFFD9DEDB), width: 3),
+              ),
+            ),
+            child: Text.rich(
+              TextSpan(children: _inlineSpans(context, block.spans, _bodySize)),
+            ),
+          ),
+        );
+      case TheoremBlock():
+        // \begin{proof} is conventionally unboxed and unnumbered: an
+        // italicized "Proof." label, the argument, and a trailing QED mark
+        // instead of a bold "Noun N." in a bordered box.
+        final isProof = block.noun == 'Proof';
+        final content = Text.rich(
+          TextSpan(
+            children: <InlineSpan>[
+              TextSpan(
+                text: block.number == null
+                    ? '${block.noun}. '
+                    : '${block.noun} ${block.number}. ',
+                style: TextStyle(
+                  fontWeight: isProof ? null : FontWeight.w700,
+                  fontStyle: isProof ? FontStyle.italic : null,
+                ),
+              ),
+              if (block.title != null) ...[
+                TextSpan(
+                  children: _inlineSpans(context, block.title!, _bodySize),
+                  style: const TextStyle(fontStyle: FontStyle.italic),
+                ),
+                const TextSpan(text: '. '),
+              ],
+              ..._inlineSpans(context, block.body, _bodySize),
+              if (isProof) const TextSpan(text: ' ∎'),
+            ],
+          ),
+        );
+        return isProof
+            ? Padding(
+                padding: EdgeInsets.symmetric(vertical: 6 * zoom),
+                child: content,
+              )
+            : Padding(
+                padding: EdgeInsets.symmetric(vertical: 8 * zoom),
+                child: Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(12 * zoom),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF7F5F0),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: const Color(0xFFE3DDCE)),
+                  ),
+                  child: content,
+                ),
+              );
     }
   }
 
