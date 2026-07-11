@@ -1,0 +1,27 @@
+# Dart and Flutter
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+.melos_tool/
+pubspec_overrides.yaml
+coverage/
+**/build/
+**/.flutter-plugins-dependencies
+**/ephemeral/
+**/.symlinks/
+
+# Native dependency output
+target/
+**/Pods/
+
+# The web engine is built from the sibling Ratex repository.
+apps/ManyMath/web/ratex_ffi.wasm
+
+# Editors and operating systems
+.DS_Store
+*.iml
+*.log
+*.swp
+.idea/
+.vscode/
