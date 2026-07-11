@@ -138,6 +138,10 @@ List<FormulaIssue> checkFormulas(
             );
           }
         }
+      case BibliographyBlock():
+        for (final entry in block.entries) {
+          checkInlines(entry.spans);
+        }
       case CodeBlock():
       // Verbatim text: nothing to check, RaTeX never sees it.
     }

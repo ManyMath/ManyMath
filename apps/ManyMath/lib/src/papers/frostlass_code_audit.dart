@@ -3432,5 +3432,10 @@ Expand integration tests with simulated or mocked adversarial node data. This wi
 \clearpage
 \printindex
 
+\section*{References}
+\begin{thebibliography}{9}
+\bibitem{SeraiRepo} Luke Parker (KayabaNerve). serai-dex/serai/. GitHub repository, 2024.
+\end{thebibliography}
+
 \end{document}
 ''';

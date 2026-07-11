@@ -286,6 +286,39 @@ class DocumentView extends StatelessWidget {
             ),
           ),
         );
+      case BibliographyBlock():
+        return Padding(
+          padding: EdgeInsets.only(bottom: 12 * zoom, left: 8 * zoom),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              for (final entry in block.entries)
+                Padding(
+                  padding: EdgeInsets.only(bottom: 6 * zoom),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      SizedBox(
+                        width: 36 * zoom,
+                        child: Text('[${entry.number}]'),
+                      ),
+                      Expanded(
+                        child: Text.rich(
+                          TextSpan(
+                            children: _inlineSpans(
+                              context,
+                              entry.spans,
+                              _bodySize,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
     }
   }
 

@@ -97,6 +97,21 @@ final class CodeBlock extends DocBlock {
   final String code;
 }
 
+/// One `\bibitem{key}` entry of a `\begin{thebibliography}` block, numbered
+/// in declaration order (see [_collectReferences]).
+final class BibliographyEntry {
+  const BibliographyEntry({required this.number, required this.spans});
+
+  final int number;
+  final List<DocInline> spans;
+}
+
+final class BibliographyBlock extends DocBlock {
+  const BibliographyBlock(this.entries);
+
+  final List<BibliographyEntry> entries;
+}
+
 /// One run of inline content inside a paragraph, heading, or list item.
 sealed class DocInline {
   const DocInline();
@@ -156,6 +171,144 @@ const _mathEnvironments = {
 /// from comment-stripping.
 const _codeEnvironments = {'lstlisting', 'verbatim', 'Verbatim', 'minted'};
 
+/// What `\ref`/`\cref`/`\Cref` print for one `\label`: a resolved number
+/// (`3.2`) and the noun cleveref would use (`section`, `definition`, ...).
+class LabelInfo {
+  const LabelInfo(this.number, this.noun);
+
+  final String number;
+  final String noun;
+}
+
+/// Maps a label's namespace prefix (the part before its first `:` — `sec:`,
+/// `def:`, `eq:`, `fig:`, by LaTeX convention) to the noun `\cref` prints.
+/// A prefix outside this table still gets its own sequential counter (see
+/// [_collectReferences]); it just prints as a generic "item".
+const _labelPrefixNouns = {
+  'sec': 'section',
+  'subsec': 'section',
+  'ssec': 'section',
+  'def': 'definition',
+  'lem': 'lemma',
+  'thm': 'theorem',
+  'cor': 'corollary',
+  'prop': 'proposition',
+  'eq': 'equation',
+  'eqn': 'equation',
+  'fig': 'figure',
+  'table': 'table',
+  'tab': 'table',
+  'alg': 'algorithm',
+  'oracle': 'oracle',
+  'game': 'game',
+  'app': 'appendix',
+};
+
+/// Scans [text] (a comment-stripped document body) once for everything a
+/// reference needs: `\section`-family headings (their real, dotted
+/// numbers), `\label` declarations, and `\bibitem` declarations inside
+/// `\begin{thebibliography}` (numbered in declaration order — the numeric
+/// bibliography style all of these papers use).
+///
+/// This parser doesn't model `\newtheorem`'s custom counters, so a
+/// `\label` outside the `sec:`/`subsec:`/`ssec:` convention is approximated
+/// by grouping labels by their own naming prefix and counting each group
+/// in order of appearance — real papers consistently prefix labels by
+/// kind (`def:`, `lem:`, `fig:`, ...), so this recovers the right numbers
+/// without needing to parse `\newtheorem`/`\newaliascnt` at all.
+({Map<String, LabelInfo> labels, Map<String, int> citations})
+_collectReferences(String text) {
+  final labels = <String, LabelInfo>{};
+  final citations = <String, int>{};
+  final sectionCounters = [0, 0, 0];
+  final groupCounters = <String, int>{};
+  var bibCount = 0;
+
+  final marker = RegExp(
+    r'\\(sub){0,2}section\*?\{'
+    r'|\\label\{([^}]*)\}'
+    r'|\\bibitem(?:\[[^\]]*\])?\{([^}]*)\}',
+  );
+  for (final m in marker.allMatches(text)) {
+    final bibKey = m.group(3);
+    final labelName = m.group(2);
+    if (bibKey != null) {
+      bibCount++;
+      citations[bibKey] = bibCount;
+    } else if (labelName != null) {
+      final colon = labelName.indexOf(':');
+      final prefix = colon > 0 ? labelName.substring(0, colon) : '';
+      if (prefix == 'sec' || prefix == 'subsec' || prefix == 'ssec') {
+        final depth = sectionCounters.lastIndexWhere((c) => c > 0);
+        final number = depth < 0
+            ? '?'
+            : sectionCounters.sublist(0, depth + 1).join('.');
+        labels[labelName] = LabelInfo(number, 'section');
+      } else {
+        final noun = _labelPrefixNouns[prefix] ?? 'item';
+        final count = (groupCounters[prefix] ?? 0) + 1;
+        groupCounters[prefix] = count;
+        labels[labelName] = LabelInfo('$count', noun);
+      }
+    } else {
+      final level = 'sub'.allMatches(m.group(0)!).length;
+      sectionCounters[level]++;
+      for (var i = level + 1; i < sectionCounters.length; i++) {
+        sectionCounters[i] = 0;
+      }
+    }
+  }
+  return (labels: labels, citations: citations);
+}
+
+/// Replaces `\ref`/`\eqref`/`\cref`/`\Cref`/`\cite` with resolved text and
+/// drops `\label` entirely (a `\label` itself prints nothing in LaTeX
+/// either). An unresolved target renders as `??`, matching what LaTeX
+/// prints for a `\ref` with no matching `\label`.
+String _resolveReferences(
+  String text,
+  Map<String, LabelInfo> labels,
+  Map<String, int> citations,
+) {
+  // Deliberately doesn't also bail when labels/citations are both empty: an
+  // undefined \ref must still render as "??" (matching real LaTeX), not
+  // leak its raw source.
+  if (!text.contains(r'\')) return text;
+  final pattern = RegExp(
+    r'\\label\{[^}]*\}'
+    r'|\\eqref\{([^}]*)\}'
+    r'|\\[Cc]ref\{([^}]*)\}'
+    r'|\\ref\{([^}]*)\}'
+    r'|\\cite[tp]?\{([^}]*)\}',
+  );
+  return text.replaceAllMapped(pattern, (m) {
+    final whole = m.group(0)!;
+    if (whole.startsWith(r'\label')) return '';
+    final eqrefTarget = m.group(1);
+    final crefTarget = m.group(2);
+    final refTarget = m.group(3);
+    final citeKeys = m.group(4);
+    if (eqrefTarget != null) {
+      return '(${labels[eqrefTarget]?.number ?? '??'})';
+    }
+    if (crefTarget != null) {
+      final info = labels[crefTarget];
+      if (info == null) return '??';
+      final noun = whole.startsWith(r'\C')
+          ? info.noun[0].toUpperCase() + info.noun.substring(1)
+          : info.noun;
+      return '$noun ${info.number}';
+    }
+    if (refTarget != null) {
+      return labels[refTarget]?.number ?? '??';
+    }
+    final numbers = citeKeys!
+        .split(',')
+        .map((key) => citations[key.trim()]?.toString() ?? '?');
+    return '[${numbers.join(', ')}]';
+  });
+}
+
 /// Parses [source] into document blocks. Lenient by construction: malformed
 /// input degrades to plain text rather than failing.
 List<DocBlock> parseLatexDocument(String source) {
@@ -170,6 +323,9 @@ List<DocBlock> parseLatexDocument(String source) {
   // \begin{document} slice below drops it) so preamble-declared macros are
   // seen; see _expandTextMacros.
   final macros = _parseMacroDefs(stripped.text);
+  final references = _collectReferences(stripped.text);
+  final labels = references.labels;
+  final citations = references.citations;
 
   final title = _argOf(text, stripped.map, r'\title');
   final author = _argOf(text, stripped.map, r'\author');
@@ -209,6 +365,8 @@ List<DocBlock> parseLatexDocument(String source) {
     final spans = parseInline(
       content,
       macros: macros,
+      labels: labels,
+      citations: citations,
       sourceMap: map.sublist(start, start + content.length),
     );
     if (spans.isNotEmpty) blocks.add(ParagraphBlock(spans));
@@ -345,6 +503,8 @@ List<DocBlock> parseLatexDocument(String source) {
             final itemSpans = parseInline(
               trimmed,
               macros: macros,
+              labels: labels,
+              citations: citations,
               sourceMap: map.sublist(start, start + trimmed.length),
             );
             // \description's `[label]` is the item's required title, not an
@@ -371,6 +531,52 @@ List<DocBlock> parseLatexDocument(String source) {
           i = next;
           continue;
         }
+        if (name == 'thebibliography') {
+          flushParagraph();
+          var bibBody = body;
+          var bibBodyStart = env.end;
+          // Skip the required {widest-label} argument, e.g.
+          // \begin{thebibliography}{99}.
+          if (bibBody.startsWith('{')) {
+            final arg = _balancedArg(bibBody, 0);
+            if (arg != null) {
+              bibBody = bibBody.substring(arg.$2);
+              bibBodyStart += arg.$2;
+            }
+          }
+          final marks = RegExp(
+            r'\\bibitem(?:\[[^\]]*\])?\{([^}]*)\}',
+          ).allMatches(bibBody).toList();
+          final entries = <BibliographyEntry>[];
+          for (var k = 0; k < marks.length; k++) {
+            final key = marks[k].group(1)!;
+            final segStart = marks[k].end;
+            final segEnd = k + 1 < marks.length
+                ? marks[k + 1].start
+                : bibBody.length;
+            final segment = bibBody.substring(segStart, segEnd);
+            final leading = segment.length - segment.trimLeft().length;
+            final trimmed = segment.trim();
+            if (trimmed.isEmpty) continue;
+            final start = bibBodyStart + segStart + leading;
+            entries.add(
+              BibliographyEntry(
+                number: citations[key] ?? (k + 1),
+                spans: parseInline(
+                  trimmed,
+                  macros: macros,
+                  labels: labels,
+                  citations: citations,
+                  sourceMap: map.sublist(start, start + trimmed.length),
+                ),
+              ),
+            );
+          }
+          entries.sort((a, b) => a.number.compareTo(b.number));
+          if (entries.isNotEmpty) blocks.add(BibliographyBlock(entries));
+          i = next;
+          continue;
+        }
       }
       // Unknown or unterminated environment: fall through as text.
     }
@@ -388,6 +594,8 @@ List<DocBlock> parseLatexDocument(String source) {
             parseInline(
               arg.$1,
               macros: macros,
+              labels: labels,
+              citations: citations,
               sourceMap: map.sublist(section.end, section.end + arg.$1.length),
             ),
           ),
@@ -432,14 +640,21 @@ List<DocInline> parseInline(
   bool monospace = false,
   bool underline = false,
   Map<String, MacroDefinition> macros = const {},
+  Map<String, LabelInfo> labels = const {},
+  Map<String, int> citations = const {},
   List<int>? sourceMap,
 }) {
   assert(
     sourceMap == null || sourceMap.length == source.length,
     'sourceMap must align 1:1 with source',
   );
-  if (macros.isNotEmpty) {
-    final expanded = _expandTextMacros(source, macros);
+  {
+    var expanded = macros.isEmpty ? source : _expandTextMacros(source, macros);
+    // Not gated on labels/citations being non-empty: an undefined \ref
+    // must still resolve to "??" (matching real LaTeX) rather than leak
+    // its raw source, so this always runs when there's a backslash at all
+    // (see _resolveReferences).
+    expanded = _resolveReferences(expanded, labels, citations);
     if (expanded != source) {
       source = expanded;
       // The expansion changed the text's length/content, so per-character
@@ -577,6 +792,8 @@ List<DocInline> parseInline(
               monospace: monospace,
               underline: underline,
               macros: macros,
+              labels: labels,
+              citations: citations,
               sourceMap: sourceMap?.sublist(
                 secondStart + 1,
                 secondStart + 1 + second.$1.length,
@@ -588,10 +805,15 @@ List<DocInline> parseInline(
         }
       }
     }
-    // \url's argument is verbatim (LaTeX doesn't interpret `_`, `%`, etc.
-    // inside it), so it's taken as-is rather than recursively parsed.
-    if (source.startsWith(r'\url{', i)) {
-      final arg = _balancedArg(source, i + r'\url'.length);
+    // \url and \path's arguments are verbatim (LaTeX doesn't interpret `_`,
+    // `%`, etc. inside them), so they're taken as-is rather than
+    // recursively parsed.
+    const verbatimCommands = {r'\url', r'\path'};
+    final verbatimCommand = verbatimCommands
+        .where((name) => source.startsWith('$name{', i))
+        .firstOrNull;
+    if (verbatimCommand != null) {
+      final arg = _balancedArg(source, i + verbatimCommand.length);
       if (arg != null) {
         flushRun();
         spans.add(
@@ -603,6 +825,57 @@ List<DocInline> parseInline(
             underline: underline,
           ),
         );
+        i = arg.$2;
+        continue;
+      }
+    }
+
+    // Zero-argument symbol commands: replaced with the character they
+    // typeset, not a recognized-command lookup, so they need a boundary
+    // check (`\ldots` isn't a prefix of some longer, unrelated command).
+    const symbolCommands = {
+      r'\ldots': '…',
+      r'\dots': '…',
+      r'\textdagger': '†',
+      r'\textddagger': '‡',
+    };
+    final symbol = symbolCommands.entries
+        .where(
+          (e) =>
+              source.startsWith(e.key, i) &&
+              (i + e.key.length >= source.length ||
+                  !_isAsciiLetter(source[i + e.key.length])),
+        )
+        .firstOrNull;
+    if (symbol != null) {
+      run.write(symbol.value);
+      i += symbol.key.length;
+      continue;
+    }
+
+    // \protect is a no-op prefix (it only matters for LaTeX's own fragile/
+    // moving-argument machinery), so it's dropped and whatever follows is
+    // parsed normally on the next iteration.
+    if (source.startsWith(r'\protect', i) &&
+        (i + 8 >= source.length || !_isAsciiLetter(source[i + 8]))) {
+      i += 8;
+      continue;
+    }
+    // \hfill is horizontal spacing with no visible content of its own.
+    if (source.startsWith(r'\hfill', i) &&
+        (i + 6 >= source.length || !_isAsciiLetter(source[i + 6]))) {
+      i += 6;
+      continue;
+    }
+    // \vspace{...}/\vspace*{...} is vertical spacing; its argument is a
+    // dimension, not visible content.
+    if (source.startsWith(r'\vspace', i)) {
+      var argStart = i + 7;
+      if (argStart < source.length && source[argStart] == '*') argStart++;
+      final arg = argStart < source.length && source[argStart] == '{'
+          ? _balancedArg(source, argStart)
+          : null;
+      if (arg != null) {
         i = arg.$2;
         continue;
       }
@@ -625,6 +898,15 @@ List<DocInline> parseInline(
       // track. Showing the term itself, unstyled, beats leaking the raw
       // command.
       r'\gls{': (bold: false, italic: false, monospace: false, underline: false),
+      // \textsuperscript{...}: shown at normal size rather than actually
+      // raised — this parser's inline model has no notion of baseline
+      // offset — but that beats leaking the raw command.
+      r'\textsuperscript{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
     };
     final style = styles.entries
         .where((e) => source.startsWith(e.key, i))
@@ -642,6 +924,8 @@ List<DocInline> parseInline(
             monospace: monospace || style.value.monospace,
             underline: underline || style.value.underline,
             macros: macros,
+            labels: labels,
+            citations: citations,
             sourceMap: sourceMap?.sublist(argStart, argStart + arg.$1.length),
           ),
         );
@@ -689,6 +973,10 @@ List<DocInline> parseInline(
         block.items.forEach(countSpans);
       case CodeBlock():
         words += wordRe.allMatches(block.code).length;
+      case BibliographyBlock():
+        for (final entry in block.entries) {
+          countSpans(entry.spans);
+        }
     }
   }
   return (words: words, formulas: formulas);

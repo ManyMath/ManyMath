@@ -666,6 +666,33 @@ Three plain words here $x$ and $$y$$
       expect(run.monospace, isFalse);
     });
 
+    test(r'\path is shown verbatim, like \url', () {
+      final run = parseInline(r'\path{/serai/networks/monero/}').single as TextRun;
+      expect(run.text, '/serai/networks/monero/');
+      expect(run.monospace, isTrue);
+    });
+
+    test(r'\ldots/\dots become an ellipsis, \textdagger a dagger', () {
+      expect(
+        (parseInline(r'a\ldots b\dots c\textdagger').single as TextRun).text,
+        'a… b… c†',
+      );
+    });
+
+    test(r'\protect is a no-op, \hfill and \vspace produce nothing', () {
+      final spans = parseInline(r'a\protect\ref{x} b\hfill c\vspace{2pt} d');
+      final text = spans.whereType<TextRun>().map((s) => s.text).join();
+      expect(text, contains('a?? b c d'));
+      expect(text, isNot(contains('protect')));
+      expect(text, isNot(contains('hfill')));
+      expect(text, isNot(contains('vspace')));
+    });
+
+    test(r'\textsuperscript shows its content unstyled', () {
+      final run = parseInline(r'\textsuperscript{1}').single as TextRun;
+      expect(run.text, '1');
+    });
+
     test(r'\href shows only its second argument', () {
       final spans = parseInline(r'See \href{https://example.com}{the docs}.');
       final text = spans.whereType<TextRun>().map((s) => s.text).join();
@@ -734,6 +761,123 @@ Three plain words here $x$ and $$y$$
 
     test('returns an empty string when there are no declarations', () {
       expect(extractMacroPreamble(r'\section{Intro} $x^2$'), isEmpty);
+    });
+  });
+
+  group('references (\\label/\\ref/\\cref/\\cite)', () {
+    test(r'\ref/\cref resolve real section numbers', () {
+      final blocks = parseLatexDocument(r'''
+\begin{document}
+\section{Alpha}
+\subsection{Beta}\label{sec:beta}
+See \ref{sec:beta} and \cref{sec:beta} and \Cref{sec:beta}.
+\end{document}
+''');
+      final text = blocks
+          .whereType<ParagraphBlock>()
+          .last
+          .spans
+          .whereType<TextRun>()
+          .map((s) => s.text)
+          .join();
+      expect(text, contains('See 1.1 and section 1.1 and Section 1.1.'));
+    });
+
+    test(r'an unresolved \ref renders as ??, matching LaTeX', () {
+      final blocks = parseLatexDocument(r'''
+\begin{document}
+See \ref{sec:missing}.
+\end{document}
+''');
+      final text = (blocks.single as ParagraphBlock).spans
+          .whereType<TextRun>()
+          .map((s) => s.text)
+          .join();
+      expect(text, contains('See ??.'));
+    });
+
+    test(r'\label produces no visible text', () {
+      final blocks = parseLatexDocument(r'''
+\begin{document}
+Some text\label{sec:x} continues here.
+\end{document}
+''');
+      final text = (blocks.single as ParagraphBlock).spans
+          .whereType<TextRun>()
+          .map((s) => s.text)
+          .join();
+      expect(text, isNot(contains('label')));
+      expect(text, contains('Some text'));
+      expect(text, contains('continues here.'));
+    });
+
+    test('labels outside sec:/eq: are grouped by their own prefix', () {
+      final blocks = parseLatexDocument(r'''
+\begin{document}
+\begin{definition}\label{def:first}First.\end{definition}
+\begin{definition}\label{def:second}Second.\end{definition}
+See \cref{def:first} and \cref{def:second}.
+\end{document}
+''');
+      final text = blocks
+          .whereType<ParagraphBlock>()
+          .last
+          .spans
+          .whereType<TextRun>()
+          .map((s) => s.text)
+          .join();
+      expect(text, contains('definition 1'));
+      expect(text, contains('definition 2'));
+    });
+
+    test(r'\cite resolves against \bibitem numbers inside thebibliography', () {
+      final blocks = parseLatexDocument(r'''
+\begin{document}
+As shown by \cite{shamir1979share,shoup2000practical}.
+
+\begin{thebibliography}{9}
+\bibitem{shamir1979share} Adi Shamir. How to share a secret. 1979.
+\bibitem{shoup2000practical} Victor Shoup. Practical threshold signatures. 2000.
+\end{thebibliography}
+\end{document}
+''');
+      final citing = blocks
+          .whereType<ParagraphBlock>()
+          .first
+          .spans
+          .whereType<TextRun>()
+          .map((s) => s.text)
+          .join();
+      expect(citing, contains('[1, 2]'));
+
+      final bib = blocks.whereType<BibliographyBlock>().single;
+      expect(bib.entries, hasLength(2));
+      expect(bib.entries[0].number, 1);
+      expect(bib.entries[1].number, 2);
+      final firstText = bib.entries[0].spans
+          .whereType<TextRun>()
+          .map((s) => s.text)
+          .join();
+      expect(firstText, contains('Adi Shamir'));
+    });
+
+    test(r'an undefined \cite key renders as [?]', () {
+      final blocks = parseLatexDocument(r'''
+\begin{document}
+See \cite{nonexistent}.
+\begin{thebibliography}{9}
+\bibitem{known} Someone. Something. 2020.
+\end{thebibliography}
+\end{document}
+''');
+      final text = blocks
+          .whereType<ParagraphBlock>()
+          .first
+          .spans
+          .whereType<TextRun>()
+          .map((s) => s.text)
+          .join();
+      expect(text, contains('[?]'));
     });
   });
 }

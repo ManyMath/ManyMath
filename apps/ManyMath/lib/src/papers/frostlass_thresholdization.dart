@@ -4073,8 +4073,21 @@ cannot be satisfied or if distribution data is incomplete.
 
 
 
-\bibliographystyle{splncs04}
-\bibliography{sources.bib}
+\section*{References}
+\begin{thebibliography}{9}
+\bibitem{shamir1979share} Shamir, Adi. How to Share a Secret. Communications of the ACM, 1979.
+\bibitem{shoup2000practical} Shoup, Victor. Practical Threshold Signatures. Advances in Cryptology---EUROCRYPT 2000, 2000.
+\bibitem{bellare2006multi} Bellare, Mihir and Neven, Gregory. Multi-Signatures in the Plain Public-Key Model and a General Forking Lemma. Proceedings of the 13th ACM conference on Computer and communications security, 2006.
+\bibitem{li1988analysis} Li, X and Malek, Miroslaw. Analysis of Speedup and Communication/Computation Ratio in Multiprocessor Systems. Proceedings. Real-Time Systems Symposium, 1988.
+\bibitem{zhang2002id} Zhang, Fangguo and Liu, Shengli and Kim, Kwangjo. ID-Based One Round Authenticated Tripartite Key Agreement Protocol with Pairings. Cryptology ePrint Archive, 2002.
+\bibitem{bunz2018bulletproofs} B\"unz, Benedikt and Bootle, Jonathan and Boneh, Dan and Poelstra, Andrew and Wuille, Pieter and Maxwell, Greg. Bulletproofs: Short Proofs for Confidential Transactions and More. 2018 IEEE symposium on security and privacy (SP), 2018.
+\bibitem{clsag} Goodell, Brandon and Noether, Sarang and Blue, Arthur. Concise Linkable Ring Signatures and Forgery Against Adversarial Keys. Cryptology ePrint Archive, 2019.
+\bibitem{liu2004linkable} Liu, Joseph K and Wei, Victor K and Wong, Duncan S. Linkable Spontaneous Anonymous Group Signature for Ad Hoc Groups. Information Security and Privacy: 9th Australasian Conference, ACISP 2004, 2004.
+\bibitem{goodell2018thring} Goodell, Brandon and Noether, Sarang. Thring Signatures and Their Applications to Spender-Ambiguous Digital Currencies. Cryptology ePrint Archive, 2018.
+\bibitem{komlo2021frost} Komlo, Chelsea and Goldberg, Ian. FROST: Flexible Round-Optimized Schnorr Threshold Signatures. Selected Areas in Cryptography 2020, 2021.
+\bibitem{SeraiRepo} Luke Parker. monero-oxide. GitHub repository, 2024.
+\bibitem{bellare2022better} Bellare, Mihir and Crites, Elizabeth C and Komlo, Chelsea and Maller, Mary and Tessaro, Stefano and Zhu, Chenzhi. Better than Advertised Security for Non-interactive Threshold Signatures. Advances in Cryptology---CRYPTO 2022, 2022.
+\end{thebibliography}
 
 \end{document}
 ''';
