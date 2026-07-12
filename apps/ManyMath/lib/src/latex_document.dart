@@ -1008,6 +1008,17 @@ List<DocInline> parseInline(
           i = based.$2;
           continue;
         }
+        // Declined (e.g. \"{\i}, the dotless-i idiom): keep the whole
+        // construct as one literal run — the bare-group handling below
+        // must not strip its braces and re-interpret the inside.
+        if (i + 2 < source.length && source[i + 2] == '{') {
+          final group = _balancedArg(source, i + 2);
+          if (group != null) {
+            run.write(source.substring(i, group.$2));
+            i = group.$2;
+            continue;
+          }
+        }
       }
     }
 
@@ -1036,6 +1047,74 @@ List<DocInline> parseInline(
       }
     }
 
+    // An unescaped ~ is a non-breaking space, not a literal tilde.
+    if (source[i] == '~') {
+      run.write(' ');
+      i++;
+      continue;
+    }
+    // A bare {...} group scopes declarations (`{\ttfamily code}`); recurse
+    // so the group's own style switches end at its closing brace and the
+    // braces themselves never show.
+    if (source[i] == '{') {
+      final group = _balancedArg(source, i);
+      if (group != null && group.$1.isEmpty) {
+        // An empty group is invisible but still a token boundary: after an
+        // unexpanded control word (`\to{}b`, see _expandTextMacros) a
+        // zero-width space keeps the following letter from reading as part
+        // of the control word.
+        if (RegExp(r'\\[a-zA-Z]+$').hasMatch(run.toString())) {
+          run.write('​');
+        }
+        i = group.$2;
+        continue;
+      }
+      if (group != null) {
+        flushRun();
+        spans.addAll(
+          parseInline(
+            group.$1,
+            bold: bold,
+            italic: italic,
+            monospace: monospace,
+            underline: underline,
+            macros: macros,
+            labels: labels,
+            citations: citations,
+            sourceMap: sourceMap?.sublist(i + 1, i + 1 + group.$1.length),
+          ),
+        );
+        i = group.$2;
+        continue;
+      }
+    }
+    // A stray closing brace (its opener was consumed by an outer construct)
+    // prints nothing.
+    if (source[i] == '}') {
+      i++;
+      continue;
+    }
+
+    // Control-symbol spacing commands (no letter after the backslash, so
+    // the word-boundary logic below doesn't apply to them).
+    const controlSymbols = {
+      r'\ ': ' ',
+      r'\,': ' ',
+      r'\;': ' ',
+      r'\:': ' ',
+      r'\!': '',
+      r'\/': '',
+      r'\@': '',
+    };
+    final controlSymbol = controlSymbols.entries
+        .where((e) => source.startsWith(e.key, i))
+        .firstOrNull;
+    if (controlSymbol != null) {
+      run.write(controlSymbol.value);
+      i += 2;
+      continue;
+    }
+
     // Zero-argument symbol commands: replaced with the character they
     // typeset, not a recognized-command lookup, so they need a boundary
     // check (`\ldots` isn't a prefix of some longer, unrelated command).
@@ -1044,6 +1123,34 @@ List<DocInline> parseInline(
       r'\dots': '…',
       r'\textdagger': '†',
       r'\textddagger': '‡',
+      r'\dag': '†',
+      r'\ddag': '‡',
+      r'\textbar': '|',
+      r'\textbackslash': '\\',
+      r'\textasciitilde': '~',
+      r'\textasciicircum': '^',
+      r'\textunderscore': '_',
+      r'\textbullet': '•',
+      r'\textemdash': '—',
+      r'\textendash': '–',
+      r'\textquotedblleft': '“',
+      r'\textquotedblright': '”',
+      r'\textgreater': '>',
+      r'\textless': '<',
+      r'\S': '§',
+      r'\P': '¶',
+      r'\copyright': '©',
+      r'\textregistered': '®',
+      r'\texttrademark': '™',
+      r'\LaTeX': 'LaTeX',
+      r'\TeX': 'TeX',
+      r'\quad': ' ',
+      r'\qquad': '  ',
+      r'\enspace': ' ',
+      r'\thinspace': ' ',
+      // \and separates \author/\keywords entries; a middle dot is how
+      // multi-author headers commonly typeset it.
+      r'\and': ' · ',
     };
     final symbol = symbolCommands.entries
         .where(
@@ -1073,17 +1180,191 @@ List<DocInline> parseInline(
       i += 6;
       continue;
     }
-    // \vspace{...}/\vspace*{...} is vertical spacing; its argument is a
-    // dimension, not visible content.
-    if (source.startsWith(r'\vspace', i)) {
-      var argStart = i + 7;
-      if (argStart < source.length && source[argStart] == '*') argStart++;
+    // \vspace{...}/\vspace*{...}/\hspace{...} are spacing; their argument
+    // is a dimension, not visible content.
+    final space = RegExp(r'\\[vh]space\*?').matchAsPrefix(source, i);
+    if (space != null) {
+      final argStart = space.end;
       final arg = argStart < source.length && source[argStart] == '{'
           ? _balancedArg(source, argStart)
           : null;
       if (arg != null) {
+        // \hspace mid-sentence still separates words.
+        if (source[i + 1] == 'h') run.write(' ');
         i = arg.$2;
         continue;
+      }
+    }
+
+    // \verb<delim>...<delim> (and \verb*): verbatim monospace text with an
+    // arbitrary one-character delimiter.
+    if (source.startsWith(r'\verb', i) &&
+        (i + 5 >= source.length || !_isAsciiLetter(source[i + 5]))) {
+      var delimAt = i + 5;
+      if (delimAt < source.length && source[delimAt] == '*') delimAt++;
+      if (delimAt < source.length) {
+        final close = source.indexOf(source[delimAt], delimAt + 1);
+        if (close > delimAt) {
+          flushRun();
+          spans.add(
+            TextRun(
+              source.substring(delimAt + 1, close),
+              bold: bold,
+              italic: italic,
+              monospace: true,
+              underline: underline,
+            ),
+          );
+          i = close + 1;
+          continue;
+        }
+      }
+    }
+
+    // \symbol{code}: the character with that code ("hex, 'octal, decimal).
+    if (source.startsWith(r'\symbol{', i)) {
+      final arg = _balancedArg(source, i + 7);
+      if (arg != null) {
+        final raw = arg.$1.trim();
+        final code = raw.startsWith('"')
+            ? int.tryParse(raw.substring(1), radix: 16)
+            : raw.startsWith("'")
+            ? int.tryParse(raw.substring(1), radix: 8)
+            : int.tryParse(raw);
+        if (code != null && code >= 0 && code <= 0x10FFFF) {
+          run.write(String.fromCharCode(code));
+          i = arg.$2;
+          continue;
+        }
+      }
+    }
+
+    // llncs's \keywords{...}: typeset as a run-in "Keywords:" line, its
+    // \and separators becoming middle dots (see symbolCommands).
+    if (source.startsWith(r'\keywords{', i)) {
+      final arg = _balancedArg(source, i + r'\keywords'.length);
+      if (arg != null) {
+        flushRun();
+        spans.add(const TextRun('\n'));
+        spans.add(const TextRun('Keywords: ', bold: true));
+        final argStart = i + r'\keywords{'.length;
+        spans.addAll(
+          parseInline(
+            arg.$1,
+            bold: bold,
+            italic: italic,
+            monospace: monospace,
+            underline: underline,
+            macros: macros,
+            labels: labels,
+            citations: citations,
+            sourceMap: sourceMap?.sublist(argStart, argStart + arg.$1.length),
+          ),
+        );
+        i = arg.$2;
+        continue;
+      }
+    }
+
+    if (source.startsWith(r'\', i)) {
+      final word = RegExp(r'[a-zA-Z]+').matchAsPrefix(source, i + 1)?.group(0);
+      if (word != null) {
+        // \par is a paragraph break reaching inline context: a line break
+        // is the closest this model gets.
+        if (word == 'par') {
+          flushRun();
+          spans.add(const TextRun('\n'));
+          i += 1 + word.length;
+          continue;
+        }
+        // Scoped declarations (\bfseries, \ttfamily, \scriptsize, ...)
+        // style the rest of the enclosing group. Bare-group recursion above
+        // already bounds the scope, so applying to the remainder of this
+        // source is exactly right.
+        const boldDeclarations = {'bfseries', 'bf'};
+        const italicDeclarations = {'itshape', 'it', 'em', 'slshape', 'sl'};
+        const monospaceDeclarations = {'ttfamily', 'tt'};
+        // Size and family switches this renderer doesn't model: scope-level
+        // no-ops, far better than leaking the raw command.
+        const inertDeclarations = {
+          'rmfamily', 'sffamily', 'normalfont', 'upshape', 'mdseries',
+          'scshape', 'sc', 'rm', 'sf',
+          'tiny', 'scriptsize', 'footnotesize', 'small', 'normalsize',
+          'large', 'Large', 'LARGE', 'huge', 'Huge',
+          'centering', 'raggedright', 'raggedleft',
+        };
+        final styled = boldDeclarations.contains(word) ||
+            italicDeclarations.contains(word) ||
+            monospaceDeclarations.contains(word);
+        if (styled || inertDeclarations.contains(word)) {
+          final restStart = i + 1 + word.length;
+          if (!styled) {
+            i = restStart;
+            continue;
+          }
+          flushRun();
+          spans.addAll(
+            parseInline(
+              source.substring(restStart),
+              bold: bold || boldDeclarations.contains(word),
+              italic: italic || italicDeclarations.contains(word),
+              monospace: monospace || monospaceDeclarations.contains(word),
+              underline: underline,
+              macros: macros,
+              labels: labels,
+              citations: citations,
+              sourceMap: sourceMap?.sublist(restStart),
+            ),
+          );
+          i = source.length;
+          continue;
+        }
+        // Commands that produce nothing visible, with the number of braced
+        // arguments to swallow along with them.
+        const droppedCommands = {
+          'clearpage': 0, 'cleardoublepage': 0, 'newpage': 0,
+          'pagebreak': 0, 'nopagebreak': 0, 'linebreak': 0, 'break': 0,
+          'noindent': 0, 'indent': 0, 'ignorespaces': 0,
+          'smallskip': 0, 'medskip': 0, 'bigskip': 0,
+          'sloppy': 0, 'frenchspacing': 0, 'relax': 0, 'leavevmode': 0,
+          'strut': 0, 'vfill': 0, 'dotfill': 0, 'hrulefill': 0,
+          'tableofcontents': 0, 'listoffigures': 0, 'listoftables': 0,
+          'printindex': 0, 'printglossary': 0, 'printglossaries': 0,
+          'makeindex': 0, 'makeglossaries': 0, 'appendix': 0,
+          'footnotemark': 0, 'qed': 0, 'allowdisplaybreaks': 0,
+          'onehalfspacing': 0, 'singlespacing': 0, 'doublespacing': 0,
+          'pagestyle': 1, 'thispagestyle': 1, 'pagenumbering': 1,
+          'linespread': 1, 'captionsetup': 1, 'markright': 1,
+          'setlength': 2, 'addtolength': 2, 'setcounter': 2,
+          'addtocounter': 2, 'numberwithin': 2, 'markboth': 2,
+          'addcontentsline': 3,
+          'bibliographystyle': 1, 'index': 1, 'glsadd': 1,
+          'phantom': 1, 'hphantom': 1, 'vphantom': 1, 'rule': 2,
+        };
+        final dropArgs = droppedCommands[word];
+        if (dropArgs != null) {
+          var j = i + 1 + word.length;
+          // An optional [...] group (e.g. \rule[raise]{w}{h}).
+          var jj = _skipSpaces(source, j);
+          if (jj < source.length && source[jj] == '[') {
+            final close = source.indexOf(']', jj);
+            if (close > 0) j = close + 1;
+          }
+          var ok = true;
+          for (var a = 0; a < dropArgs; a++) {
+            final at = _skipSpaces(source, j);
+            final arg = _balancedArg(source, at);
+            if (arg == null) {
+              ok = false;
+              break;
+            }
+            j = arg.$2;
+          }
+          if (ok) {
+            i = j;
+            continue;
+          }
+        }
       }
     }
 

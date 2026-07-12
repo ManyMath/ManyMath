@@ -16,11 +16,12 @@ import 'package:ratex_flutter/ratex_flutter.dart';
 
 const _verbose = bool.fromEnvironment('AUDIT_VERBOSE');
 
-/// Backslash commands, environment markers, math-mode alignment/anchor
-/// characters: none of these belong in a plain prose run after parsing.
-final _leakRe = RegExp(
-  r'\\[a-zA-Z]+|\\begin\{|\\end\{|(?<![\\])[&^]|~',
-);
+/// Backslash commands and environment markers: none of these belong in a
+/// plain prose run after parsing. Bare `&`/`~`/`^` are NOT flagged — after
+/// parsing they are legitimate rendered output (`\&`, `\textasciitilde`,
+/// verbatim `\url` arguments), while raw alignment/nbsp uses always travel
+/// with backslash commands that are flagged.
+final _leakRe = RegExp(r'\\[a-zA-Z]+|\\begin\{|\\end\{');
 
 void _collectLeaks(List<DocInline> spans, List<String> leaks, String where) {
   for (final span in spans) {
