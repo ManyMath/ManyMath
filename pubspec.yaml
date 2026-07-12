@@ -31,3 +31,9 @@ melos:
     test:
       description: Run the ManyMath editor tests.
       run: flutter test apps/ManyMath/test
+    web:build:
+      description: Build the deployable ManyMath.com distribution.
+      run: ./apps/ManyMath/tool/build_web.sh
+    web:verify:
+      description: Verify an assembled ManyMath.com distribution.
+      run: ./apps/ManyMath/tool/verify_web_dist.sh
