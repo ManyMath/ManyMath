@@ -85,7 +85,10 @@ final class ListBlock extends DocBlock {
   const ListBlock({required this.style, required this.items});
 
   final ListStyle style;
-  final List<List<DocInline>> items;
+
+  /// Each item is a full block sequence: real papers nest lists, display
+  /// math, and even theorem environments inside a single `\item`.
+  final List<List<DocBlock>> items;
 }
 
 /// A verbatim-like environment (`lstlisting`, `verbatim`, `Verbatim`,
@@ -113,11 +116,12 @@ final class BibliographyBlock extends DocBlock {
 }
 
 /// A `quote`/`quotation` environment: shown indented, set off from the
-/// surrounding prose.
+/// surrounding prose. The body is a full block sequence — quoted material
+/// in real papers includes lists and display math, not just prose.
 final class QuoteBlock extends DocBlock {
-  const QuoteBlock(this.spans);
+  const QuoteBlock(this.children);
 
-  final List<DocInline> spans;
+  final List<DocBlock> children;
 }
 
 /// A `definition`/`theorem`/`lemma`/... environment (see
@@ -136,7 +140,10 @@ final class TheoremBlock extends DocBlock {
   final String noun;
   final String? number;
   final List<DocInline>? title;
-  final List<DocInline> body;
+
+  /// A full block sequence: proofs and definitions routinely contain
+  /// `align*` blocks and enumerated case analyses, not just prose.
+  final List<DocBlock> body;
 }
 
 /// One run of inline content inside a paragraph, heading, or list item.
@@ -399,6 +406,49 @@ List<DocBlock> parseLatexDocument(String source) {
     map = map.sublist(bodyStart, bodyEnd);
   }
 
+  return _BlockParser(
+    macros: macros,
+    labels: labels,
+    citations: citations,
+    title: title,
+    author: author,
+    date: date,
+  ).parse(text, map);
+}
+
+/// The block-level parse loop, recursive so that environments whose bodies
+/// are themselves block sequences (theorems, quotes, list items) render
+/// nested display math and lists instead of leaking them as raw text.
+class _BlockParser {
+  _BlockParser({
+    required this.macros,
+    required this.labels,
+    required this.citations,
+    this.title,
+    this.author,
+    this.date,
+  });
+
+  final Map<String, MacroDefinition> macros;
+  final Map<String, LabelInfo> labels;
+  final Map<String, int> citations;
+  final ({String value, List<int> sourceMap})? title;
+  final ({String value, List<int> sourceMap})? author;
+  final ({String value, List<int> sourceMap})? date;
+
+  List<DocInline> _inline(String content, List<int>? sourceMap) {
+    return parseInline(
+      content,
+      macros: macros,
+      labels: labels,
+      citations: citations,
+      sourceMap: sourceMap,
+    );
+  }
+
+  /// Parses one block sequence. [map] carries each character of [text] back
+  /// to the original document source (see [parseLatexDocument]).
+  List<DocBlock> parse(String text, List<int> map) {
   final blocks = <DocBlock>[];
   final paragraph = StringBuffer();
   // Stripped-text index of the first character in the buffer. Everything a
@@ -418,12 +468,9 @@ List<DocBlock> parseLatexDocument(String source) {
     if (content.isEmpty) return;
     final leading = raw.length - raw.trimLeft().length;
     final start = paragraphStart + leading;
-    final spans = parseInline(
+    final spans = _inline(
       content,
-      macros: macros,
-      labels: labels,
-      citations: citations,
-      sourceMap: map.sublist(start, start + content.length),
+      map.sublist(start, start + content.length),
     );
     if (spans.isNotEmpty) blocks.add(ParagraphBlock(spans));
   }
@@ -537,14 +584,14 @@ List<DocBlock> parseLatexDocument(String source) {
         }
         if (name == 'itemize' || name == 'enumerate' || name == 'description') {
           flushParagraph();
-          // \item only, not \itemsep and friends. Nested block content
-          // inside an item degrades to inline text (see parseInline), but
-          // the depth-aware end search above keeps it inside the item
-          // instead of leaking raw \end tokens into the page. Content
-          // before the first \item (typically spacing commands like
-          // \itemsep0pt) is not a bullet.
-          final marks = RegExp(r'\\item(?![a-zA-Z])').allMatches(body).toList();
-          final items = <List<DocInline>>[];
+          // \item only, not \itemsep and friends, and only at this list's
+          // own nesting depth — an \item inside a nested environment
+          // belongs to that environment, not this list. Content before the
+          // first \item (typically spacing commands like \itemsep0pt) is
+          // not a bullet. Each item's body is a full recursive block parse,
+          // so nested lists and display math render properly.
+          final marks = _topLevelItemMarks(body);
+          final items = <List<DocBlock>>[];
           for (var k = 0; k < marks.length; k++) {
             final segStart = marks[k].end;
             final segEnd = k + 1 < marks.length
@@ -552,29 +599,29 @@ List<DocBlock> parseLatexDocument(String source) {
                 : body.length;
             final label = _stripItemLabel(body.substring(segStart, segEnd));
             final segment = label.$1;
-            final leading = segment.length - segment.trimLeft().length;
-            final trimmed = segment.trim();
-            if (trimmed.isEmpty && label.$3 == null) continue;
-            final start = env.end + segStart + label.$2 + leading;
-            final itemSpans = parseInline(
-              trimmed,
-              macros: macros,
-              labels: labels,
-              citations: citations,
-              sourceMap: map.sublist(start, start + trimmed.length),
+            if (segment.trim().isEmpty && label.$3 == null) continue;
+            final start = env.end + segStart + label.$2;
+            final itemBlocks = parse(
+              segment,
+              map.sublist(start, start + segment.length),
             );
             // \description's `[label]` is the item's required title, not an
             // optional override like itemize/enumerate's, so it's shown
-            // (bolded) instead of being dropped.
-            items.add(
-              name == 'description' && label.$3 != null
-                  ? [
-                      TextRun(label.$3!.trim(), bold: true),
-                      const TextRun(' '),
-                      ...itemSpans,
-                    ]
-                  : itemSpans,
-            );
+            // (bolded) instead of being dropped — merged into the item's
+            // first paragraph so it stays run-in.
+            if (name == 'description' && label.$3 != null) {
+              final labelRuns = <DocInline>[
+                TextRun(label.$3!.trim(), bold: true),
+                const TextRun(' '),
+              ];
+              if (itemBlocks.isNotEmpty && itemBlocks.first is ParagraphBlock) {
+                final first = itemBlocks.first as ParagraphBlock;
+                itemBlocks[0] = ParagraphBlock([...labelRuns, ...first.spans]);
+              } else {
+                itemBlocks.insert(0, ParagraphBlock(labelRuns));
+              }
+            }
+            items.add(itemBlocks);
           }
           if (items.isNotEmpty) {
             final style = switch (name) {
@@ -618,12 +665,9 @@ List<DocBlock> parseLatexDocument(String source) {
             entries.add(
               BibliographyEntry(
                 number: citations[key] ?? (k + 1),
-                spans: parseInline(
+                spans: _inline(
                   trimmed,
-                  macros: macros,
-                  labels: labels,
-                  citations: citations,
-                  sourceMap: map.sublist(start, start + trimmed.length),
+                  map.sublist(start, start + trimmed.length),
                 ),
               ),
             );
@@ -635,42 +679,15 @@ List<DocBlock> parseLatexDocument(String source) {
         }
         if (name == 'quote' || name == 'quotation') {
           flushParagraph();
-          final trimmed = body.trim();
-          if (trimmed.isNotEmpty) {
-            final start = env.end + (body.length - body.trimLeft().length);
-            blocks.add(
-              QuoteBlock(
-                parseInline(
-                  trimmed,
-                  macros: macros,
-                  labels: labels,
-                  citations: citations,
-                  sourceMap: map.sublist(start, start + trimmed.length),
-                ),
-              ),
-            );
-          }
+          final children = parse(body, map.sublist(env.end, end));
+          if (children.isNotEmpty) blocks.add(QuoteBlock(children));
           i = next;
           continue;
         }
         if (name == 'abstract') {
           flushParagraph();
           blocks.add(const HeadingBlock(2, [TextRun('Abstract', bold: true)]));
-          final trimmed = body.trim();
-          if (trimmed.isNotEmpty) {
-            final start = env.end + (body.length - body.trimLeft().length);
-            blocks.add(
-              ParagraphBlock(
-                parseInline(
-                  trimmed,
-                  macros: macros,
-                  labels: labels,
-                  citations: citations,
-                  sourceMap: map.sublist(start, start + trimmed.length),
-                ),
-              ),
-            );
-          }
+          blocks.addAll(parse(body, map.sublist(env.end, end)));
           i = next;
           continue;
         }
@@ -686,15 +703,9 @@ List<DocBlock> parseLatexDocument(String source) {
             if (close >= 0) {
               final titleText = theoremBody.substring(1, close);
               final titleStart = theoremBodyStart + 1;
-              title = parseInline(
+              title = _inline(
                 titleText,
-                macros: macros,
-                labels: labels,
-                citations: citations,
-                sourceMap: map.sublist(
-                  titleStart,
-                  titleStart + titleText.length,
-                ),
+                map.sublist(titleStart, titleStart + titleText.length),
               );
               theoremBody = theoremBody.substring(close + 1);
               theoremBodyStart += close + 1;
@@ -711,23 +722,15 @@ List<DocBlock> parseLatexDocument(String source) {
           if (labelMatch != null) {
             number = labels[labelMatch.group(1)]?.number;
           }
-          final trimmed = theoremBody.trim();
-          final start =
-              theoremBodyStart + (theoremBody.length - theoremBody.trimLeft().length);
           blocks.add(
             TheoremBlock(
               noun: theoremNoun,
               number: number,
               title: title,
-              body: trimmed.isEmpty
-                  ? const []
-                  : parseInline(
-                      trimmed,
-                      macros: macros,
-                      labels: labels,
-                      citations: citations,
-                      sourceMap: map.sublist(start, start + trimmed.length),
-                    ),
+              body: parse(
+                theoremBody,
+                map.sublist(theoremBodyStart, theoremBodyStart + theoremBody.length),
+              ),
             ),
           );
           i = next;
@@ -747,12 +750,9 @@ List<DocBlock> parseLatexDocument(String source) {
         blocks.add(
           HeadingBlock(
             level,
-            parseInline(
+            _inline(
               arg.$1,
-              macros: macros,
-              labels: labels,
-              citations: citations,
-              sourceMap: map.sublist(section.end, section.end + arg.$1.length),
+              map.sublist(section.end, section.end + arg.$1.length),
             ),
           ),
         );
@@ -781,6 +781,29 @@ List<DocBlock> parseLatexDocument(String source) {
   }
   flushParagraph();
   return blocks;
+  }
+}
+
+/// The depth-0 `\item` marks of a list environment's body: an `\item`
+/// inside a nested `\begin{...}...\end{...}` (an inner list, a minipage, a
+/// verbatim block) belongs to that inner environment, not this list.
+List<RegExpMatch> _topLevelItemMarks(String body) {
+  final marks = <RegExpMatch>[];
+  var depth = 0;
+  final token = RegExp(
+    r'\\begin\{[a-zA-Z*]+\}|\\end\{[a-zA-Z*]+\}|\\item(?![a-zA-Z])',
+  );
+  for (final m in token.allMatches(body)) {
+    final matched = m.group(0)!;
+    if (matched.startsWith(r'\begin')) {
+      depth++;
+    } else if (matched.startsWith(r'\end')) {
+      if (depth > 0) depth--;
+    } else if (depth == 0) {
+      marks.add(m);
+    }
+  }
+  return marks;
 }
 
 /// Parses inline content: `$...$`, `\(...\)`, `\textbf{}`, `\textit{}`,
@@ -1140,33 +1163,37 @@ List<DocInline> parseInline(
     }
   }
 
-  for (final block in blocks) {
-    switch (block) {
-      case TitleBlock():
-        for (final metadata in [block.title, block.author, block.date]) {
-          if (metadata != null) countSpans(parseInline(metadata));
-        }
-      case HeadingBlock():
-        countSpans(block.spans);
-      case ParagraphBlock():
-        countSpans(block.spans);
-      case DisplayMathBlock():
-        formulas++;
-      case ListBlock():
-        block.items.forEach(countSpans);
-      case CodeBlock():
-        words += wordRe.allMatches(block.code).length;
-      case BibliographyBlock():
-        for (final entry in block.entries) {
-          countSpans(entry.spans);
-        }
-      case QuoteBlock():
-        countSpans(block.spans);
-      case TheoremBlock():
-        if (block.title != null) countSpans(block.title!);
-        countSpans(block.body);
+  void countBlocks(List<DocBlock> blocks) {
+    for (final block in blocks) {
+      switch (block) {
+        case TitleBlock():
+          for (final metadata in [block.title, block.author, block.date]) {
+            if (metadata != null) countSpans(parseInline(metadata));
+          }
+        case HeadingBlock():
+          countSpans(block.spans);
+        case ParagraphBlock():
+          countSpans(block.spans);
+        case DisplayMathBlock():
+          formulas++;
+        case ListBlock():
+          block.items.forEach(countBlocks);
+        case CodeBlock():
+          words += wordRe.allMatches(block.code).length;
+        case BibliographyBlock():
+          for (final entry in block.entries) {
+            countSpans(entry.spans);
+          }
+        case QuoteBlock():
+          countBlocks(block.children);
+        case TheoremBlock():
+          if (block.title != null) countSpans(block.title!);
+          countBlocks(block.body);
+      }
     }
   }
+
+  countBlocks(blocks);
   return (words: words, formulas: formulas);
 }
 

@@ -237,11 +237,7 @@ class DocumentView extends StatelessWidget {
                 Padding(
                   padding: EdgeInsets.only(bottom: 4 * zoom),
                   child: block.style == ListStyle.description
-                      ? Text.rich(
-                          TextSpan(
-                            children: _inlineSpans(context, item, _bodySize),
-                          ),
-                        )
+                      ? _blockColumn(context, item)
                       : Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: <Widget>[
@@ -255,17 +251,7 @@ class DocumentView extends StatelessWidget {
                               ),
                             ),
                             SizedBox(width: 8 * zoom),
-                            Expanded(
-                              child: Text.rich(
-                                TextSpan(
-                                  children: _inlineSpans(
-                                    context,
-                                    item,
-                                    _bodySize,
-                                  ),
-                                ),
-                              ),
-                            ),
+                            Expanded(child: _blockColumn(context, item)),
                           ],
                         ),
                 ),
@@ -339,9 +325,7 @@ class DocumentView extends StatelessWidget {
                 left: BorderSide(color: Color(0xFFD9DEDB), width: 3),
               ),
             ),
-            child: Text.rich(
-              TextSpan(children: _inlineSpans(context, block.spans, _bodySize)),
-            ),
+            child: _blockColumn(context, block.children),
           ),
         );
       case TheoremBlock():
@@ -349,29 +333,49 @@ class DocumentView extends StatelessWidget {
         // italicized "Proof." label, the argument, and a trailing QED mark
         // instead of a bold "Noun N." in a bordered box.
         final isProof = block.noun == 'Proof';
-        final content = Text.rich(
-          TextSpan(
-            children: <InlineSpan>[
+        // The label (and optional [title]) run in with the body's first
+        // paragraph, matching amsthm's run-in heading; block-level body
+        // content (display math, lists) follows below.
+        final body = block.body;
+        final runIn = body.isNotEmpty && body.first is ParagraphBlock;
+        final rest = runIn ? body.sublist(1) : body;
+        final qedRunIn = isProof && runIn && rest.isEmpty;
+        final content = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Text.rich(
               TextSpan(
-                text: block.number == null
-                    ? '${block.noun}. '
-                    : '${block.noun} ${block.number}. ',
-                style: TextStyle(
-                  fontWeight: isProof ? null : FontWeight.w700,
-                  fontStyle: isProof ? FontStyle.italic : null,
-                ),
+                children: <InlineSpan>[
+                  TextSpan(
+                    text: block.number == null
+                        ? '${block.noun}. '
+                        : '${block.noun} ${block.number}. ',
+                    style: TextStyle(
+                      fontWeight: isProof ? null : FontWeight.w700,
+                      fontStyle: isProof ? FontStyle.italic : null,
+                    ),
+                  ),
+                  if (block.title != null) ...[
+                    TextSpan(
+                      children: _inlineSpans(context, block.title!, _bodySize),
+                      style: const TextStyle(fontStyle: FontStyle.italic),
+                    ),
+                    const TextSpan(text: '. '),
+                  ],
+                  if (runIn)
+                    ..._inlineSpans(
+                      context,
+                      (body.first as ParagraphBlock).spans,
+                      _bodySize,
+                    ),
+                  if (qedRunIn) const TextSpan(text: ' ∎'),
+                ],
               ),
-              if (block.title != null) ...[
-                TextSpan(
-                  children: _inlineSpans(context, block.title!, _bodySize),
-                  style: const TextStyle(fontStyle: FontStyle.italic),
-                ),
-                const TextSpan(text: '. '),
-              ],
-              ..._inlineSpans(context, block.body, _bodySize),
-              if (isProof) const TextSpan(text: ' ∎'),
-            ],
-          ),
+            ),
+            for (final child in rest) _buildBlock(context, child),
+            if (isProof && !qedRunIn)
+              const Align(alignment: Alignment.centerRight, child: Text('∎')),
+          ],
         );
         return isProof
             ? Padding(
@@ -392,6 +396,16 @@ class DocumentView extends StatelessWidget {
                 ),
               );
     }
+  }
+
+  /// A nested block sequence (list item, quote body) laid out vertically.
+  Widget _blockColumn(BuildContext context, List<DocBlock> blocks) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        for (final block in blocks) _buildBlock(context, block),
+      ],
+    );
   }
 
   List<InlineSpan> _inlineSpans(

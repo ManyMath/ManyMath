@@ -44,15 +44,15 @@ void _walkBlocks(List<DocBlock> blocks, List<String> leaks, String where) {
         _collectLeaks(block.spans, leaks, '$where/h${block.level}');
       case ListBlock():
         for (final item in block.items) {
-          _collectLeaks(item, leaks, '$where/li');
+          _walkBlocks(item, leaks, '$where/li');
         }
       case QuoteBlock():
-        _collectLeaks(block.spans, leaks, '$where/quote');
+        _walkBlocks(block.children, leaks, '$where/quote');
       case TheoremBlock():
         if (block.title != null) {
           _collectLeaks(block.title!, leaks, '$where/thm-title');
         }
-        _collectLeaks(block.body, leaks, '$where/thm');
+        _walkBlocks(block.body, leaks, '$where/thm');
       case BibliographyBlock():
         for (final entry in block.entries) {
           _collectLeaks(entry.spans, leaks, '$where/bib');

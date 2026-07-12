@@ -1,6 +1,37 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manymath/src/latex_document.dart';
 
+/// Every inline span reachable from [blocks], in document order — a
+/// convenience for tests that assert over the text/math of nested block
+/// structures (list items, quote bodies, theorem bodies).
+Iterable<DocInline> inlinesOf(List<DocBlock> blocks) sync* {
+  for (final block in blocks) {
+    switch (block) {
+      case ParagraphBlock():
+        yield* block.spans;
+      case HeadingBlock():
+        yield* block.spans;
+      case ListBlock():
+        for (final item in block.items) {
+          yield* inlinesOf(item);
+        }
+      case QuoteBlock():
+        yield* inlinesOf(block.children);
+      case TheoremBlock():
+        if (block.title != null) yield* block.title!;
+        yield* inlinesOf(block.body);
+      case BibliographyBlock():
+        for (final entry in block.entries) {
+          yield* entry.spans;
+        }
+      case TitleBlock():
+      case DisplayMathBlock():
+      case CodeBlock():
+        break;
+    }
+  }
+}
+
 void main() {
   group('parseLatexDocument', () {
     test('splits prose and display math', () {
@@ -76,7 +107,9 @@ struct Foo;
 \end{quote}
 ''');
       final quote = blocks.whereType<QuoteBlock>().single;
-      final text = quote.spans.whereType<TextRun>().map((s) => s.text).join();
+      final text = inlinesOf(
+        quote.children,
+      ).whereType<TextRun>().map((s) => s.text).join();
       expect(text, contains('Recommendation'));
       expect(text, contains('Fix it.'));
     });
@@ -117,7 +150,9 @@ See \cref{def:ro}.
         expect(theorem.number, '1');
         final title = theorem.title!.whereType<TextRun>().map((s) => s.text).join();
         expect(title, 'Random Oracle');
-        final body = theorem.body.whereType<TextRun>().map((s) => s.text).join();
+        final body = inlinesOf(
+          theorem.body,
+        ).whereType<TextRun>().map((s) => s.text).join();
         expect(body, contains('uniformly random'));
 
         final crefText = blocks
@@ -159,7 +194,7 @@ Trivial.
       expect(proof.noun, 'Proof');
       expect(proof.number, isNull);
       expect(
-        proof.body.whereType<TextRun>().map((s) => s.text).join(),
+        inlinesOf(proof.body).whereType<TextRun>().map((s) => s.text).join(),
         contains('Trivial.'),
       );
     });
@@ -226,7 +261,10 @@ Ignored trailer.
       final bullets = blocks[0] as ListBlock;
       expect(bullets.style, ListStyle.bullet);
       expect(bullets.items, hasLength(2));
-      expect(bullets.items[0].whereType<InlineMath>().single.latex, 'x^2');
+      expect(
+        inlinesOf(bullets.items[0]).whereType<InlineMath>().single.latex,
+        'x^2',
+      );
       final numbered = blocks[1] as ListBlock;
       expect(numbered.style, ListStyle.numbered);
     });
@@ -241,7 +279,7 @@ Ignored trailer.
       final list = blocks.single as ListBlock;
       expect(list.style, ListStyle.description);
       expect(list.items, hasLength(2));
-      final first = list.items[0];
+      final first = inlinesOf(list.items[0]).toList();
       final label = first.first as TextRun;
       expect(label.text, 'Source');
       expect(label.bold, isTrue);
@@ -403,22 +441,26 @@ Outputs \verifyIO here.
       expect(text, contains('next'));
     });
 
-    test('nested itemize stays inside the outer list', () {
-      // Nested lists are out of scope (their source degrades to item text),
-      // but they must not truncate the outer environment: outer2 stays a
-      // bullet and no raw tokens leak out of the list into paragraphs.
+    test('nested itemize becomes a real nested ListBlock', () {
       final blocks = parseLatexDocument(
         r'\begin{itemize}\item outer'
         r'\begin{itemize}\item inner\end{itemize}'
         r'\item outer2\end{itemize}',
       );
       final list = blocks.whereType<ListBlock>().single;
-      final allText = list.items
-          .expand((item) => item)
-          .whereType<TextRun>()
-          .map((s) => s.text)
-          .join(' ');
-      expect(allText, contains('outer2'));
+      expect(list.items, hasLength(2), reason: 'inner \\item is not ours');
+      final inner = list.items[0].whereType<ListBlock>().single;
+      expect(
+        inlinesOf(inner.items.single)
+            .whereType<TextRun>()
+            .map((s) => s.text)
+            .join(),
+        contains('inner'),
+      );
+      final outer2 = inlinesOf(
+        list.items[1],
+      ).whereType<TextRun>().map((s) => s.text).join();
+      expect(outer2, contains('outer2'));
       expect(
         blocks.whereType<ParagraphBlock>(),
         isEmpty,
@@ -435,7 +477,7 @@ Outputs \verifyIO here.
       // create a bogus extra bullet beyond it.
       final bulletsWithContent = list.items
           .where(
-            (item) => item.whereType<TextRun>().any(
+            (item) => inlinesOf(item).whereType<TextRun>().any(
               (s) => s.text.contains('only one'),
             ),
           )
@@ -443,14 +485,19 @@ Outputs \verifyIO here.
       expect(bulletsWithContent, hasLength(1));
     });
 
-    test('display math inside a list item degrades to inline math', () {
+    test('display math inside a list item is real display math', () {
       final blocks = parseLatexDocument(
         r'\begin{itemize}\item The identity $$e^{i\pi} = -1$$ holds'
         r'\end{itemize}',
       );
       final item = blocks.whereType<ListBlock>().single.items.single;
-      expect(item.whereType<InlineMath>().single.latex, r'e^{i\pi} = -1');
-      final text = item.whereType<TextRun>().map((s) => s.text).join();
+      expect(
+        item.whereType<DisplayMathBlock>().single.latex,
+        r'e^{i\pi} = -1',
+      );
+      final text = inlinesOf(
+        item,
+      ).whereType<TextRun>().map((s) => s.text).join();
       expect(text, isNot(contains(r'$')));
     });
 
@@ -472,7 +519,7 @@ Outputs \verifyIO here.
       );
       final list = blocks.whereType<ListBlock>().single;
       expect(list.items, hasLength(1));
-      expect((list.items.single.single as TextRun).text, 'real');
+      expect((inlinesOf(list.items.single).single as TextRun).text, 'real');
     });
 
     test(r'\item[label] optional arguments are stripped', () {
@@ -480,16 +527,16 @@ Outputs \verifyIO here.
         r'\begin{itemize}\item[(a)] first\item second\end{itemize}',
       );
       final list = blocks.whereType<ListBlock>().single;
-      expect((list.items[0].single as TextRun).text, 'first');
-      expect((list.items[1].single as TextRun).text, 'second');
+      expect((inlinesOf(list.items[0]).single as TextRun).text, 'first');
+      expect((inlinesOf(list.items[1]).single as TextRun).text, 'second');
     });
 
-    test(r'\[..\] inside a list item degrades to inline math', () {
+    test(r'\[..\] inside a list item is real display math', () {
       final blocks = parseLatexDocument(
         r'\begin{itemize}\item yields \[ \zeta(2) \] here\end{itemize}',
       );
       final item = blocks.whereType<ListBlock>().single.items.single;
-      expect(item.whereType<InlineMath>().single.latex, r'\zeta(2)');
+      expect(item.whereType<DisplayMathBlock>().single.latex, r'\zeta(2)');
     });
 
     test(r'\title {X} with whitespace before the brace still parses', () {
@@ -604,13 +651,9 @@ Outputs \verifyIO here.
       const source =
           '\\begin{itemize}\n  \\item has \$x^2\$ inside\n'
           '\\end{itemize}';
-      final math = parseLatexDocument(source)
-          .whereType<ListBlock>()
-          .single
-          .items
-          .single
-          .whereType<InlineMath>()
-          .single;
+      final math = inlinesOf(
+        parseLatexDocument(source).whereType<ListBlock>().single.items.single,
+      ).whereType<InlineMath>().single;
       final start = source.indexOf(r'$x^2$');
       expect(math.sourceStart, start);
       expect(math.sourceEnd, start + r'$x^2$'.length);

@@ -110,47 +110,51 @@ List<FormulaIssue> checkFormulas(
     }
   }
 
-  for (final block in blocks) {
-    switch (block) {
-      case DisplayMathBlock():
-        check(
-          block.latex,
-          displayMode: true,
-          start: block.sourceStart,
-          end: block.sourceEnd,
-          latexSourceMap: block.latexSourceMap,
-        );
-      case ParagraphBlock():
-        checkInlines(block.spans);
-      case HeadingBlock():
-        checkInlines(block.spans);
-      case ListBlock():
-        block.items.forEach(checkInlines);
-      case TitleBlock():
-        for (final metadata in <({String? value, List<int>? sourceMap})>[
-          (value: block.title, sourceMap: block.titleSourceMap),
-          (value: block.author, sourceMap: block.authorSourceMap),
-          (value: block.date, sourceMap: block.dateSourceMap),
-        ]) {
-          if (metadata.value != null) {
-            checkInlines(
-              parseInline(metadata.value!, sourceMap: metadata.sourceMap),
-            );
+  void checkBlocks(List<DocBlock> blocks) {
+    for (final block in blocks) {
+      switch (block) {
+        case DisplayMathBlock():
+          check(
+            block.latex,
+            displayMode: true,
+            start: block.sourceStart,
+            end: block.sourceEnd,
+            latexSourceMap: block.latexSourceMap,
+          );
+        case ParagraphBlock():
+          checkInlines(block.spans);
+        case HeadingBlock():
+          checkInlines(block.spans);
+        case ListBlock():
+          block.items.forEach(checkBlocks);
+        case TitleBlock():
+          for (final metadata in <({String? value, List<int>? sourceMap})>[
+            (value: block.title, sourceMap: block.titleSourceMap),
+            (value: block.author, sourceMap: block.authorSourceMap),
+            (value: block.date, sourceMap: block.dateSourceMap),
+          ]) {
+            if (metadata.value != null) {
+              checkInlines(
+                parseInline(metadata.value!, sourceMap: metadata.sourceMap),
+              );
+            }
           }
-        }
-      case BibliographyBlock():
-        for (final entry in block.entries) {
-          checkInlines(entry.spans);
-        }
-      case QuoteBlock():
-        checkInlines(block.spans);
-      case TheoremBlock():
-        if (block.title != null) checkInlines(block.title!);
-        checkInlines(block.body);
-      case CodeBlock():
-      // Verbatim text: nothing to check, RaTeX never sees it.
+        case BibliographyBlock():
+          for (final entry in block.entries) {
+            checkInlines(entry.spans);
+          }
+        case QuoteBlock():
+          checkBlocks(block.children);
+        case TheoremBlock():
+          if (block.title != null) checkInlines(block.title!);
+          checkBlocks(block.body);
+        case CodeBlock():
+        // Verbatim text: nothing to check, RaTeX never sees it.
+      }
     }
   }
+
+  checkBlocks(blocks);
   return issues;
 }
 
