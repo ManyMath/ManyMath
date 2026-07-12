@@ -1,0 +1,93 @@
+name: ManyMath CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  analyze-test:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ManyMath
+    steps:
+      - name: Checkout ManyMath
+        uses: actions/checkout@v4
+        with:
+          path: ManyMath
+      - name: Checkout Ratex
+        uses: actions/checkout@v4
+        with:
+          repository: sneurlax/ratex
+          path: ratex
+          token: ${{ secrets.DEPENDENCY_CHECKOUT_TOKEN || github.token }}
+      - name: Checkout ManyUI
+        uses: actions/checkout@v4
+        with:
+          repository: sneurlax/manyui
+          path: ManyUI
+          token: ${{ secrets.DEPENDENCY_CHECKOUT_TOKEN || github.token }}
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ratex/native/ratex-ffi
+      - name: Resolve dependencies
+        run: flutter pub get
+      - name: Check formatting
+        run: >-
+          dart format --output none --set-exit-if-changed
+          apps/ManyMath/lib apps/ManyMath/test
+      - name: Analyze
+        run: flutter analyze apps/ManyMath
+      - name: Build the native engine for tests
+        run: cargo build --manifest-path ../ratex/native/ratex-ffi/Cargo.toml
+      - name: Test
+        run: flutter test apps/ManyMath/test
+
+  web-release:
+    name: Build web release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ManyMath
+    steps:
+      - name: Checkout ManyMath
+        uses: actions/checkout@v4
+        with:
+          path: ManyMath
+      - name: Checkout Ratex
+        uses: actions/checkout@v4
+        with:
+          repository: sneurlax/ratex
+          path: ratex
+          token: ${{ secrets.DEPENDENCY_CHECKOUT_TOKEN || github.token }}
+      - name: Checkout ManyUI
+        uses: actions/checkout@v4
+        with:
+          repository: sneurlax/manyui
+          path: ManyUI
+          token: ${{ secrets.DEPENDENCY_CHECKOUT_TOKEN || github.token }}
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ratex/native/ratex-ffi
+      - name: Build composed distribution
+        run: ./apps/ManyMath/tool/build_web.sh
+      - name: Verify composed distribution
+        run: ./apps/ManyMath/tool/verify_web_dist.sh
+      - name: Upload distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: manymath-web
+          path: ManyMath/apps/ManyMath/build/dist
+          if-no-files-found: error
+          retention-days: 7
