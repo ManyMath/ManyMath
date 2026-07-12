@@ -1,0 +1,47 @@
+{
+    "name": "ManyMath Editor",
+    "short_name": "ManyMath",
+    "start_url": "/edit/",
+    "scope": "/edit/",
+    "display": "standalone",
+    "background_color": "#F3F6F4",
+    "theme_color": "#2E7D32",
+    "description": "A focused LaTeX mathematics editor powered by RaTeX.",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "manymath-mark.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any"
+        },
+        {
+            "src": "manymath-maskable.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

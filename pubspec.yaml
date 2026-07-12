@@ -1,0 +1,33 @@
+name: manymath_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.10.0
+
+workspace:
+  - apps/ManyMath
+
+dependency_overrides:
+  ratex:
+    path: ../ratex/packages/ratex
+
+dev_dependencies:
+  melos: ^7.0.0
+
+melos:
+  name: manymath
+  scripts:
+    analyze:
+      description: Analyze the ManyMath editor.
+      run: flutter analyze apps/ManyMath
+    format:
+      description: Check Dart formatting.
+      run: >-
+        dart format --output none --set-exit-if-changed
+        apps/ManyMath/lib apps/ManyMath/test
+    format:fix:
+      description: Apply Dart formatting.
+      run: dart format apps/ManyMath/lib apps/ManyMath/test
+    test:
+      description: Run the ManyMath editor tests.
+      run: flutter test apps/ManyMath/test

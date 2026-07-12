@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta
+    name="description"
+    content="ManyMath Editor: write LaTeX source and render mathematics with the RaTeX engine."
+  >
+  <meta name="theme-color" content="#2e7d32">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="ManyMath Editor">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="manymath-mark.svg">
+  <link rel="icon" type="image/png" href="favicon.png">
+
+  <title>ManyMath Editor</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    html, body { height: 100%; margin: 0; background: #f3f6f4; }
+    .boot-status {
+      height: 100%; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 12px; color: #365047;
+      font: 600 14px/1.4 "Avenir Next", "Segoe UI", sans-serif;
+    }
+    .boot-status button {
+      min-height: 40px; padding: 0 14px; border: 0; border-radius: 7px;
+      background: #2e7d32; color: #ffffff; font: inherit; cursor: pointer;
+    }
+    .boot-status button:focus-visible { outline: 3px solid #2e7d32; outline-offset: 3px; }
+    .boot-status button[hidden] { display: none; }
+    @media (prefers-color-scheme: dark) {
+      html, body { background: #101512; }
+      .boot-status { color: #a5b1aa; }
+    }
+  </style>
+</head>
+<body>
+  <div class="boot-status">
+    <span class="boot-status__message" role="status" aria-live="polite">Loading ManyMath Editor</span>
+    <button class="boot-status__retry" type="button" hidden>Retry</button>
+  </div>
+  <script>
+    const bootStatus = document.querySelector('.boot-status');
+    const bootMessage = document.querySelector('.boot-status__message');
+    const bootRetry = document.querySelector('.boot-status__retry');
+    const showBootFailure = (message) => {
+      if (!bootStatus?.isConnected) return;
+      bootMessage.textContent = message;
+      bootRetry.hidden = false;
+    };
+    const startupTimer = setTimeout(
+      () => showBootFailure('ManyMath Editor is taking longer than expected.'),
+      15000,
+    );
+    bootRetry.addEventListener('click', () => location.reload());
+    window.addEventListener(
+      'error',
+      () => showBootFailure('ManyMath Editor could not start.'),
+      { once: true, capture: true },
+    );
+    window.addEventListener(
+      'unhandledrejection',
+      () => showBootFailure('ManyMath Editor could not start.'),
+      { once: true },
+    );
+    new MutationObserver((_, observer) => {
+      if (document.querySelector('flutter-view')) {
+        clearTimeout(startupTimer);
+        bootStatus.remove();
+        observer.disconnect();
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

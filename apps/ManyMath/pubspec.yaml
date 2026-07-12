@@ -1,0 +1,28 @@
+name: manymath
+description: >-
+  ManyMath, a focused LaTeX editor built on the RaTeX engine and ManyUI.
+publish_to: 'none'
+
+environment:
+  sdk: ^3.10.0
+
+resolution: workspace
+
+dependencies:
+  file_selector: ^1.1.0
+  flutter:
+    sdk: flutter
+  manyui:
+    path: ../../../ManyUI/manyui
+  ratex_flutter:
+    path: ../../../ratex/packages/ratex_flutter
+  shared_preferences: ^2.5.5
+  web: ^1.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: false
