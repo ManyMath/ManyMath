@@ -34,6 +34,7 @@ with socket.socket() as server:
 
 required_files=(
   index.html
+  404.html
   styles.css
   assets/manymath-mark.svg
   assets/editor-preview.png
@@ -48,6 +49,15 @@ for relative_path in "${required_files[@]}"; do
     exit 1
   }
 done
+
+grep -Fq '<meta name="robots" content="noindex">' "$dist_dir/404.html" || {
+  echo "distribution 404 page must be excluded from indexing" >&2
+  exit 1
+}
+if cmp -s "$dist_dir/404.html" "$dist_dir/index.html"; then
+  echo "distribution 404 page must not be the site entry point" >&2
+  exit 1
+fi
 
 grep -Fq '<base href="/edit/">' "$dist_dir/edit/index.html" || {
   echo "composed editor does not have the required /edit/ base href" >&2

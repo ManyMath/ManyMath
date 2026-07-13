@@ -15,6 +15,7 @@ trap cleanup EXIT
 
 required_site_assets=(
   index.html
+  404.html
   styles.css
   assets/manymath-mark.svg
   assets/editor-preview.png
