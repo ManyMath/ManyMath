@@ -58,9 +58,24 @@ void _walkBlocks(List<DocBlock> blocks, List<String> leaks, String where) {
         for (final entry in block.entries) {
           _collectLeaks(entry.spans, leaks, '$where/bib');
         }
+      case TableBlock():
+        for (final row in block.rows) {
+          for (final cell in row) {
+            _collectLeaks(cell.spans, leaks, '$where/td');
+          }
+        }
+      case CenterBlock():
+        _walkBlocks(block.children, leaks, '$where/center');
+      case FramedBlock():
+        _walkBlocks(block.children, leaks, '$where/frame');
+      case CaptionBlock():
+        _collectLeaks(block.spans, leaks, '$where/caption');
+      case FootnoteBlock():
+        _collectLeaks(block.spans, leaks, '$where/fn');
       case TitleBlock():
       case DisplayMathBlock():
       case CodeBlock():
+      case DiagramBlock():
         break;
     }
   }

@@ -148,8 +148,23 @@ List<FormulaIssue> checkFormulas(
         case TheoremBlock():
           if (block.title != null) checkInlines(block.title!);
           checkBlocks(block.body);
+        case TableBlock():
+          for (final row in block.rows) {
+            for (final cell in row) {
+              checkInlines(cell.spans);
+            }
+          }
+        case CenterBlock():
+          checkBlocks(block.children);
+        case FramedBlock():
+          checkBlocks(block.children);
+        case CaptionBlock():
+          checkInlines(block.spans);
+        case FootnoteBlock():
+          checkInlines(block.spans);
         case CodeBlock():
-        // Verbatim text: nothing to check, RaTeX never sees it.
+        case DiagramBlock():
+        // Verbatim/diagram source: nothing to check, RaTeX never sees it.
       }
     }
   }

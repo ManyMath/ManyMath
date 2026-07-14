@@ -315,6 +315,132 @@ class DocumentView extends StatelessWidget {
             ],
           ),
         );
+      case TableBlock():
+        final columnCount = block.rows
+            .map(
+              (row) => row.fold<int>(0, (sum, cell) => sum + cell.colSpan),
+            )
+            .fold<int>(0, (a, b) => a > b ? a : b);
+        return Padding(
+          padding: EdgeInsets.symmetric(vertical: 8 * zoom),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Table(
+              defaultColumnWidth: const IntrinsicColumnWidth(),
+              border: TableBorder.all(color: const Color(0xFFD9DEDB)),
+              defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+              children: <TableRow>[
+                for (final row in block.rows)
+                  TableRow(
+                    children: <Widget>[
+                      // Flutter's Table has no real colspan: a spanning
+                      // cell's content sits in its first column and the
+                      // spanned remainder renders as empty cells.
+                      for (final cell in row) ...[
+                        Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 10 * zoom,
+                            vertical: 6 * zoom,
+                          ),
+                          child: Text.rich(
+                            TextSpan(
+                              children: _inlineSpans(
+                                context,
+                                cell.spans,
+                                _bodySize * 0.95,
+                              ),
+                            ),
+                          ),
+                        ),
+                        for (var s = 1; s < cell.colSpan; s++)
+                          const SizedBox.shrink(),
+                      ],
+                      for (
+                        var c = row.fold<int>(
+                          0,
+                          (sum, cell) => sum + cell.colSpan,
+                        );
+                        c < columnCount;
+                        c++
+                      )
+                        const SizedBox.shrink(),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        );
+      case CenterBlock():
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: <Widget>[
+            for (final child in block.children) _buildBlock(context, child),
+          ],
+        );
+      case FramedBlock():
+        return Padding(
+          padding: EdgeInsets.symmetric(vertical: 8 * zoom),
+          child: Container(
+            width: double.infinity,
+            padding: EdgeInsets.all(12 * zoom),
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFF8A948E)),
+            ),
+            child: _blockColumn(context, block.children),
+          ),
+        );
+      case CaptionBlock():
+        return Padding(
+          padding: EdgeInsets.only(top: 4 * zoom, bottom: 10 * zoom),
+          child: Text.rich(
+            TextSpan(
+              children: <InlineSpan>[
+                TextSpan(
+                  text: '${block.label}: ',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                ..._inlineSpans(context, block.spans, _bodySize * 0.9),
+              ],
+            ),
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: _bodySize * 0.9),
+          ),
+        );
+      case DiagramBlock():
+        return Padding(
+          padding: EdgeInsets.symmetric(vertical: 8 * zoom),
+          child: Container(
+            width: double.infinity,
+            padding: EdgeInsets.all(16 * zoom),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF2F4F3),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: const Color(0xFFD9DEDB)),
+            ),
+            child: Text(
+              'Diagram (${block.kind}) — not rendered',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: const Color(0xFF64716B),
+                fontStyle: FontStyle.italic,
+                fontSize: _bodySize * 0.9,
+              ),
+            ),
+          ),
+        );
+      case FootnoteBlock():
+        return Padding(
+          padding: EdgeInsets.only(top: 2 * zoom, bottom: 2 * zoom),
+          child: Text.rich(
+            TextSpan(
+              children: <InlineSpan>[
+                TextSpan(text: '${block.number}. '),
+                ..._inlineSpans(context, block.spans, _bodySize * 0.85),
+              ],
+            ),
+            style: TextStyle(fontSize: _bodySize * 0.85),
+          ),
+        );
       case QuoteBlock():
         return Padding(
           padding: EdgeInsets.symmetric(vertical: 6 * zoom),

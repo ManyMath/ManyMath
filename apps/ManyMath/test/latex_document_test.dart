@@ -24,9 +24,24 @@ Iterable<DocInline> inlinesOf(List<DocBlock> blocks) sync* {
         for (final entry in block.entries) {
           yield* entry.spans;
         }
+      case TableBlock():
+        for (final row in block.rows) {
+          for (final cell in row) {
+            yield* cell.spans;
+          }
+        }
+      case CenterBlock():
+        yield* inlinesOf(block.children);
+      case FramedBlock():
+        yield* inlinesOf(block.children);
+      case CaptionBlock():
+        yield* block.spans;
+      case FootnoteBlock():
+        yield* block.spans;
       case TitleBlock():
       case DisplayMathBlock():
       case CodeBlock():
+      case DiagramBlock():
         break;
     }
   }

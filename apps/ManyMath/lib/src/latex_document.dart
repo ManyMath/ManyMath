@@ -146,6 +146,65 @@ final class TheoremBlock extends DocBlock {
   final List<DocBlock> body;
 }
 
+/// One cell of a [TableBlock] row. [colSpan] > 1 comes from
+/// `\multicolumn{n}{spec}{content}`.
+final class TableCellData {
+  const TableCellData(this.spans, {this.colSpan = 1});
+
+  final List<DocInline> spans;
+  final int colSpan;
+}
+
+/// A `tabular`/`tabular*`/`longtable` environment, reduced to its cell
+/// grid: rule commands (`\hline`, booktabs rules) and the column spec are
+/// layout hints this renderer standardizes away.
+final class TableBlock extends DocBlock {
+  const TableBlock(this.rows);
+
+  final List<List<TableCellData>> rows;
+}
+
+/// A `center` environment (or float content): children shown centered.
+final class CenterBlock extends DocBlock {
+  const CenterBlock(this.children);
+
+  final List<DocBlock> children;
+}
+
+/// An `mdframed` environment: children in a plain framed box.
+final class FramedBlock extends DocBlock {
+  const FramedBlock(this.children);
+
+  final List<DocBlock> children;
+}
+
+/// A `\caption{...}` inside a float. [label] is the resolved "Figure 2" /
+/// "Table 1" prefix, already numbered by the parser's per-kind counter.
+final class CaptionBlock extends DocBlock {
+  const CaptionBlock(this.label, this.spans);
+
+  final String label;
+  final List<DocInline> spans;
+}
+
+/// A drawing environment (`tikzpicture`, `tikzcd`) this renderer cannot
+/// draw: shown as an explicit placeholder rather than leaked source.
+final class DiagramBlock extends DocBlock {
+  const DiagramBlock(this.kind, this.code);
+
+  final String kind;
+  final String code;
+}
+
+/// One `\footnote{...}`, collected during parsing and appended to the end
+/// of the document; the marker at the call site is superscript digits.
+final class FootnoteBlock extends DocBlock {
+  const FootnoteBlock(this.number, this.spans);
+
+  final int number;
+  final List<DocInline> spans;
+}
+
 /// One run of inline content inside a paragraph, heading, or list item.
 sealed class DocInline {
   const DocInline();
@@ -406,14 +465,92 @@ List<DocBlock> parseLatexDocument(String source) {
     map = map.sublist(bodyStart, bodyEnd);
   }
 
-  return _BlockParser(
+  // Footnotes are spliced out before block parsing: the call site keeps a
+  // superscript-digit marker and the bodies render as end notes, so a
+  // \footnote deep inside any environment still surfaces.
+  final footnoteBodies = <({String text, List<int> map})>[];
+  final spliced = _extractFootnotes(text, map, footnoteBodies);
+  text = spliced.text;
+  map = spliced.map;
+
+  final parser = _BlockParser(
     macros: macros,
     labels: labels,
     citations: citations,
     title: title,
     author: author,
     date: date,
-  ).parse(text, map);
+  );
+  final blocks = parser.parse(text, map);
+  for (final (index, note) in footnoteBodies.indexed) {
+    blocks.add(FootnoteBlock(index + 1, parser._inline(note.text, note.map)));
+  }
+  return blocks;
+}
+
+const _superscriptDigits = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+
+String _superscriptNumber(int n) => n
+    .toString()
+    .split('')
+    .map((d) => _superscriptDigits[int.parse(d)])
+    .join();
+
+/// Splices every `\footnote{...}` (and its optional `[number]`) out of
+/// [text], leaving a superscript-digit marker mapped back to the
+/// `\footnote` call site, and collects the bodies (with their own source
+/// maps) into [out].
+({String text, List<int> map}) _extractFootnotes(
+  String text,
+  List<int> map,
+  List<({String text, List<int> map})> out,
+) {
+  if (!text.contains(r'\footnote')) return (text: text, map: map);
+  final buf = StringBuffer();
+  final outMap = <int>[];
+  final marker = RegExp(r'\\footnote(?![a-zA-Z])');
+  var i = 0;
+  while (i < text.length) {
+    if (text[i] == r'\' && text.startsWith(r'\\', i)) {
+      buf.write(r'\\');
+      outMap
+        ..add(map[i])
+        ..add(map[i + 1]);
+      i += 2;
+      continue;
+    }
+    final m = marker.matchAsPrefix(text, i);
+    if (m == null) {
+      buf.write(text[i]);
+      outMap.add(map[i]);
+      i++;
+      continue;
+    }
+    var at = _skipSpaces(text, m.end);
+    if (at < text.length && text[at] == '[') {
+      final close = text.indexOf(']', at);
+      if (close > 0) at = _skipSpaces(text, close + 1);
+    }
+    final arg = at < text.length && text[at] == '{'
+        ? _balancedArg(text, at)
+        : null;
+    if (arg == null) {
+      buf.write(text[i]);
+      outMap.add(map[i]);
+      i++;
+      continue;
+    }
+    out.add((
+      text: arg.$1,
+      map: map.sublist(at + 1, at + 1 + arg.$1.length),
+    ));
+    for (final unit in _superscriptNumber(out.length).codeUnits) {
+      buf.writeCharCode(unit);
+      outMap.add(map[i]);
+    }
+    i = arg.$2;
+  }
+  return (text: buf.toString(), map: outMap);
 }
 
 /// The block-level parse loop, recursive so that environments whose bodies
@@ -435,6 +572,14 @@ class _BlockParser {
   final ({String value, List<int> sourceMap})? title;
   final ({String value, List<int> sourceMap})? author;
   final ({String value, List<int> sourceMap})? date;
+
+  /// Enclosing float kinds ("Figure", "Table", ...) while parsing float
+  /// bodies, so a \caption knows which counter it advances.
+  final List<String> _floatStack = [];
+
+  /// Captions seen so far per kind, in document order — how LaTeX numbers
+  /// figures and tables.
+  final Map<String, int> _captionCounts = {};
 
   List<DocInline> _inline(String content, List<int>? sourceMap) {
     return parseInline(
@@ -610,8 +755,16 @@ class _BlockParser {
             // (bolded) instead of being dropped — merged into the item's
             // first paragraph so it stays run-in.
             if (name == 'description' && label.$3 != null) {
+              // The label is real LaTeX (papers put \texttt/custom macros
+              // in there), parsed with bold as description labels are set.
               final labelRuns = <DocInline>[
-                TextRun(label.$3!.trim(), bold: true),
+                ...parseInline(
+                  label.$3!.trim(),
+                  bold: true,
+                  macros: macros,
+                  labels: labels,
+                  citations: citations,
+                ),
                 const TextRun(' '),
               ];
               if (itemBlocks.isNotEmpty && itemBlocks.first is ParagraphBlock) {
@@ -691,6 +844,113 @@ class _BlockParser {
           i = next;
           continue;
         }
+        // Floats: content parses in place (this renderer has no page
+        // layout to float around), centered as floats conventionally are;
+        // the [htbp] placement hint is dropped.
+        const floatKinds = {
+          'figure': 'Figure',
+          'figure*': 'Figure',
+          'table': 'Table',
+          'table*': 'Table',
+          // \DeclareCaptionType floats used by the FROSTLASS paper.
+          'oracle': 'Oracle',
+          'game': 'Game',
+        };
+        final floatKind = floatKinds[name];
+        if (floatKind != null) {
+          flushParagraph();
+          var floatBody = body;
+          var floatStart = env.end;
+          if (floatBody.startsWith('[')) {
+            final close = floatBody.indexOf(']');
+            if (close >= 0) {
+              floatBody = floatBody.substring(close + 1);
+              floatStart += close + 1;
+            }
+          }
+          _floatStack.add(floatKind);
+          final children = parse(
+            floatBody,
+            map.sublist(floatStart, floatStart + floatBody.length),
+          );
+          _floatStack.removeLast();
+          if (children.isNotEmpty) blocks.add(CenterBlock(children));
+          i = next;
+          continue;
+        }
+        if (name == 'center') {
+          flushParagraph();
+          final children = parse(body, map.sublist(env.end, end));
+          if (children.isNotEmpty) blocks.add(CenterBlock(children));
+          i = next;
+          continue;
+        }
+        // minipage/suboracle: a width-constrained box; the content parses
+        // in place, the [pos]{width} arguments are layout hints.
+        if (name == 'minipage' || name == 'suboracle') {
+          flushParagraph();
+          var boxBody = body;
+          var boxStart = env.end;
+          if (boxBody.startsWith('[')) {
+            final close = boxBody.indexOf(']');
+            if (close >= 0) {
+              boxBody = boxBody.substring(close + 1);
+              boxStart += close + 1;
+            }
+          }
+          final width = boxBody.startsWith('{')
+              ? _balancedArg(boxBody, 0)
+              : null;
+          if (width != null) {
+            boxBody = boxBody.substring(width.$2);
+            boxStart += width.$2;
+          }
+          blocks.addAll(
+            parse(boxBody, map.sublist(boxStart, boxStart + boxBody.length)),
+          );
+          i = next;
+          continue;
+        }
+        if (name == 'mdframed') {
+          flushParagraph();
+          var boxBody = body;
+          var boxStart = env.end;
+          if (boxBody.startsWith('[')) {
+            final close = boxBody.indexOf(']');
+            if (close >= 0) {
+              boxBody = boxBody.substring(close + 1);
+              boxStart += close + 1;
+            }
+          }
+          final children = parse(
+            boxBody,
+            map.sublist(boxStart, boxStart + boxBody.length),
+          );
+          if (children.isNotEmpty) blocks.add(FramedBlock(children));
+          i = next;
+          continue;
+        }
+        // appendices (the appendix package) wraps trailing sections but
+        // adds nothing visible itself.
+        if (name == 'appendices') {
+          flushParagraph();
+          blocks.addAll(parse(body, map.sublist(env.end, end)));
+          i = next;
+          continue;
+        }
+        if (name == 'tabular' || name == 'tabular*' || name == 'longtable') {
+          flushParagraph();
+          final table = _parseTabular(name, body);
+          if (table != null) blocks.add(table);
+          i = next;
+          continue;
+        }
+        if (name == 'tikzpicture' || name == 'tikzcd') {
+          flushParagraph();
+          blocks.add(DiagramBlock(name, body.trim()));
+          i = next;
+          continue;
+        }
         final theoremNoun = _theoremEnvironmentNouns[name];
         if (theoremNoun != null) {
           flushParagraph();
@@ -740,6 +1000,34 @@ class _BlockParser {
       // Unknown or unterminated environment: fall through as text.
     }
 
+    // \caption{...}: a numbered "Figure N:"/"Table N:" line, the kind
+    // taken from the enclosing float (see _floatStack).
+    final caption = RegExp(r'\\caption(?![a-zA-Z])').matchAsPrefix(text, i);
+    if (caption != null) {
+      var at = _skipSpaces(text, caption.end);
+      if (at < text.length && text[at] == '[') {
+        final close = text.indexOf(']', at);
+        if (close > 0) at = _skipSpaces(text, close + 1);
+      }
+      final arg = at < text.length && text[at] == '{'
+          ? _balancedArg(text, at)
+          : null;
+      if (arg != null) {
+        flushParagraph();
+        final kind = _floatStack.isNotEmpty ? _floatStack.last : 'Figure';
+        final count = (_captionCounts[kind] ?? 0) + 1;
+        _captionCounts[kind] = count;
+        blocks.add(
+          CaptionBlock(
+            '$kind $count',
+            _inline(arg.$1, map.sublist(at + 1, at + 1 + arg.$1.length)),
+          ),
+        );
+        i = arg.$2;
+        continue;
+      }
+    }
+
     // Sections and \maketitle, recognized at any position.
     final section = RegExp(r'\\(sub){0,2}section\*?\{').matchAsPrefix(text, i);
     if (section != null) {
@@ -781,6 +1069,129 @@ class _BlockParser {
   }
   flushParagraph();
   return blocks;
+  }
+
+  /// Reduces a `tabular` body to its cell grid. Rows split at depth-0
+  /// `\\`, cells at depth-0 `&` (depth counts braces and nested
+  /// environments, so a nested tabular or a `\text{a \& b}` never splits
+  /// the outer grid); rule commands are dropped and `\multicolumn`
+  /// becomes a spanning cell.
+  TableBlock? _parseTabular(String name, String body) {
+    var at = 0;
+    // tabular* has a leading {width} argument.
+    if (name == 'tabular*') {
+      at = _skipSpaces(body, at);
+      final width = at < body.length && body[at] == '{'
+          ? _balancedArg(body, at)
+          : null;
+      if (width != null) at = width.$2;
+    }
+    at = _skipSpaces(body, at);
+    if (at < body.length && body[at] == '[') {
+      final close = body.indexOf(']', at);
+      if (close > 0) at = close + 1;
+    }
+    at = _skipSpaces(body, at);
+    final colspec = at < body.length && body[at] == '{'
+        ? _balancedArg(body, at)
+        : null;
+    if (colspec != null) at = colspec.$2;
+
+    final cellRanges = <List<(int, int)>>[[]];
+    var braceDepth = 0;
+    var envDepth = 0;
+    var cellStart = at;
+    var i = at;
+    void endCell(int end) => cellRanges.last.add((cellStart, end));
+    while (i < body.length) {
+      if (body[i] == r'\') {
+        if (body.startsWith(r'\begin{', i)) {
+          envDepth++;
+          i += r'\begin{'.length;
+          continue;
+        }
+        if (body.startsWith(r'\end{', i)) {
+          if (envDepth > 0) envDepth--;
+          i += r'\end{'.length;
+          continue;
+        }
+        if (body.startsWith(r'\\', i) && braceDepth == 0 && envDepth == 0) {
+          endCell(i);
+          cellRanges.add([]);
+          i += 2;
+          final length = RegExp(r'\s*\[[^\]\n]*\]').matchAsPrefix(body, i);
+          if (length != null) i = length.end;
+          cellStart = i;
+          continue;
+        }
+        i += 2;
+        continue;
+      }
+      if (body[i] == '{') {
+        braceDepth++;
+        i++;
+        continue;
+      }
+      if (body[i] == '}') {
+        if (braceDepth > 0) braceDepth--;
+        i++;
+        continue;
+      }
+      if (body[i] == '&' && braceDepth == 0 && envDepth == 0) {
+        endCell(i);
+        cellStart = i + 1;
+        i++;
+        continue;
+      }
+      i++;
+    }
+    endCell(body.length);
+
+    final rules = RegExp(
+      r'\\(hline|toprule|midrule|bottomrule|centering|arraybackslash|small|footnotesize|scriptsize)(?![a-zA-Z])'
+      r'|\\(cline|hhline|cmidrule|arrayrulecolor|rowcolor|addlinespace)\*?(\([^)]*\))?(\[[^\]]*\])?(\{[^}]*\})?',
+    );
+    final rows = <List<TableCellData>>[];
+    for (final row in cellRanges) {
+      final cells = <TableCellData>[];
+      var hasContent = false;
+      for (final (start, end) in row) {
+        var content = body.substring(start, end).replaceAll(rules, ' ').trim();
+        var colSpan = 1;
+        final multi = RegExp(r'^\\multicolumn\s*').matchAsPrefix(content);
+        if (multi != null) {
+          var j = multi.end;
+          final n = j < content.length && content[j] == '{'
+              ? _balancedArg(content, j)
+              : null;
+          if (n != null) {
+            j = _skipSpaces(content, n.$2);
+            final spec = j < content.length && content[j] == '{'
+                ? _balancedArg(content, j)
+                : null;
+            if (spec != null) {
+              j = _skipSpaces(content, spec.$2);
+              final inner = j < content.length && content[j] == '{'
+                  ? _balancedArg(content, j)
+                  : null;
+              if (inner != null) {
+                colSpan = int.tryParse(n.$1.trim()) ?? 1;
+                content = inner.$1.trim();
+              }
+            }
+          }
+        }
+        if (content.isNotEmpty) hasContent = true;
+        cells.add(
+          TableCellData(
+            content.isEmpty ? const [] : _inline(content, null),
+            colSpan: colSpan < 1 ? 1 : colSpan,
+          ),
+        );
+      }
+      if (hasContent) rows.add(cells);
+    }
+    return rows.isEmpty ? null : TableBlock(rows);
   }
 }
 
@@ -1339,6 +1750,7 @@ List<DocInline> parseInline(
           'addtocounter': 2, 'numberwithin': 2, 'markboth': 2,
           'addcontentsline': 3,
           'bibliographystyle': 1, 'index': 1, 'glsadd': 1,
+          'includegraphics': 1,
           'phantom': 1, 'hphantom': 1, 'vphantom': 1, 'rule': 2,
         };
         final dropArgs = droppedCommands[word];
@@ -1470,6 +1882,22 @@ List<DocInline> parseInline(
         case TheoremBlock():
           if (block.title != null) countSpans(block.title!);
           countBlocks(block.body);
+        case TableBlock():
+          for (final row in block.rows) {
+            for (final cell in row) {
+              countSpans(cell.spans);
+            }
+          }
+        case CenterBlock():
+          countBlocks(block.children);
+        case FramedBlock():
+          countBlocks(block.children);
+        case CaptionBlock():
+          countSpans(block.spans);
+        case FootnoteBlock():
+          countSpans(block.spans);
+        case DiagramBlock():
+          break;
       }
     }
   }
@@ -1570,8 +1998,18 @@ final _verbatimEnvironmentRe = RegExp(
     final endsVerbatim = inVerbatim && verbatimMarker?.group(1) == 'end';
     var cut = -1;
     if (!inVerbatim || endsVerbatim) {
+      // \url/\href/\path read their argument with verbatim-like catcodes in
+      // real LaTeX: a % in there (percent-encoded URLs) is a literal
+      // character, not a comment.
+      final protected = <(int, int)>[];
+      for (final m in RegExp(r'\\(?:url|href|path)\s*\{').allMatches(line)) {
+        final arg = _balancedArg(line, m.end - 1);
+        if (arg != null) protected.add((m.end, arg.$2));
+      }
       for (var i = 0; i < line.length; i++) {
         if (line[i] != '%') continue;
+        final at = i;
+        if (protected.any((r) => at >= r.$1 && at < r.$2)) continue;
         var backslashes = 0;
         while (i - 1 - backslashes >= 0 && line[i - 1 - backslashes] == r'\') {
           backslashes++;
