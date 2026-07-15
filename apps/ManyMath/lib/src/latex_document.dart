@@ -124,11 +124,11 @@ final class QuoteBlock extends DocBlock {
   final List<DocBlock> children;
 }
 
-/// A `definition`/`theorem`/`lemma`/... environment (see
-/// [_theoremEnvironmentNouns]). [number] is null when no `\label` inside
-/// the environment could be resolved to one — this parser doesn't count
-/// these environments independently of a `\label` referencing them, so an
-/// unlabeled instance is shown without a number rather than a guessed one.
+/// A `definition`/`theorem`/`lemma`/... environment (standard amsthm names
+/// plus the paper's own `\newtheorem`/`\newframedtheorem` declarations).
+/// [number] comes from real counter modeling over the whole document (see
+/// [_collectReferences]); it is null for proofs, which LaTeX leaves
+/// unnumbered.
 final class TheoremBlock extends DocBlock {
   const TheoremBlock({
     required this.noun,
@@ -326,37 +326,126 @@ const _labelPrefixNouns = {
   'app': 'appendix',
 };
 
-/// Scans [text] (a comment-stripped document body) once for everything a
-/// reference needs: `\section`-family headings (their real, dotted
-/// numbers), `\label` declarations, and `\bibitem` declarations inside
+/// One theorem-like environment's numbering behavior: the noun its number
+/// is announced with, which counter it steps (shared counters come from
+/// `\newtheorem{env}[shared]{Noun}`), and the sectioning counter it resets
+/// within (`\newtheorem{env}{Noun}[section]`), if any.
+class TheoremEnvSpec {
+  const TheoremEnvSpec(this.noun, this.counter, this.within);
+
+  final String noun;
+  final String counter;
+  final String? within;
+}
+
+/// `\newtheorem`/`\newframedtheorem` declarations anywhere in [text],
+/// mapped by environment name.
+Map<String, TheoremEnvSpec> _parseTheoremDecls(String text) {
+  final specs = <String, TheoremEnvSpec>{};
+  final decl = RegExp(
+    r'\\new(?:framed)?theorem\*?\{([^}]+)\}'
+    r'(?:\[([^\]]+)\])?\{([^}]+)\}(?:\[([^\]]+)\])?',
+  );
+  for (final m in decl.allMatches(text)) {
+    final env = m.group(1)!.trim();
+    specs[env] = TheoremEnvSpec(
+      m.group(3)!.trim(),
+      m.group(2)?.trim() ?? env,
+      m.group(4)?.trim(),
+    );
+  }
+  return specs;
+}
+
+/// Numbering specs for every theorem-like environment: the paper's own
+/// declarations layered over defaults for the standard amsthm names (flat,
+/// one counter per noun so `thm` and `theorem` count together).
+Map<String, TheoremEnvSpec> _theoremEnvSpecs(String text) {
+  return {
+    for (final entry in _theoremEnvironmentNouns.entries)
+      entry.key: TheoremEnvSpec(entry.value, 'noun:${entry.value}', null),
+    ..._parseTheoremDecls(text),
+  };
+}
+
+/// Scans [text] (the comment-stripped document body; [map] carries its
+/// characters back to the original source) once for everything a reference
+/// needs: `\section`-family headings (their real, dotted numbers),
+/// theorem-like environments (numbered by real counter modeling over
+/// [envs]), `\label` declarations, and `\bibitem` declarations inside
 /// `\begin{thebibliography}` (numbered in declaration order — the numeric
 /// bibliography style all of these papers use).
 ///
-/// This parser doesn't model `\newtheorem`'s custom counters, so a
-/// `\label` outside the `sec:`/`subsec:`/`ssec:` convention is approximated
-/// by grouping labels by their own naming prefix and counting each group
-/// in order of appearance — real papers consistently prefix labels by
-/// kind (`def:`, `lem:`, `fig:`, ...), so this recovers the right numbers
-/// without needing to parse `\newtheorem`/`\newaliascnt` at all.
-({Map<String, LabelInfo> labels, Map<String, int> citations})
-_collectReferences(String text) {
+/// A `\label` inside an open theorem environment resolves to that
+/// environment's number, like LaTeX's `\refstepcounter` machinery. Labels
+/// outside any theorem (equations, figures, tables) are approximated by
+/// grouping labels by their naming prefix and counting each group in order
+/// of appearance — real papers consistently prefix labels by kind (`eq:`,
+/// `fig:`, ...), so this recovers the right numbers without modeling every
+/// float and equation counter.
+///
+/// [theoremNumbers] maps the *original-source* offset of each numbered
+/// theorem environment's `\begin` to its resolved number, so the block
+/// parser can show the same number the references resolve to.
+({
+  Map<String, LabelInfo> labels,
+  Map<String, int> citations,
+  Map<int, String> theoremNumbers,
+})
+_collectReferences(String text, List<int> map, Map<String, TheoremEnvSpec> envs) {
   final labels = <String, LabelInfo>{};
   final citations = <String, int>{};
+  final theoremNumbers = <int, String>{};
   final sectionCounters = [0, 0, 0];
   final groupCounters = <String, int>{};
+  final counters = <String, int>{};
+  // A shared counter (\newtheorem{conj}[resul]{...}) inherits the owning
+  // declaration's [within] formatting and reset behavior.
+  final counterWithin = <String, String?>{
+    for (final entry in envs.entries)
+      if (entry.value.counter == entry.key) entry.key: entry.value.within,
+  };
+  // Innermost-last open theorem environments: (env name, noun, number).
+  final open = <(String, String, String?)>[];
   var bibCount = 0;
 
   final marker = RegExp(
     r'\\(sub){0,2}section\*?\{'
     r'|\\label\{([^}]*)\}'
-    r'|\\bibitem(?:\[[^\]]*\])?\{([^}]*)\}',
+    r'|\\bibitem(?:\[[^\]]*\])?\{([^}]*)\}'
+    r'|\\begin\{([a-zA-Z*]+)\}'
+    r'|\\end\{([a-zA-Z*]+)\}',
   );
   for (final m in marker.allMatches(text)) {
     final bibKey = m.group(3);
     final labelName = m.group(2);
+    final beginEnv = m.group(4);
+    final endEnv = m.group(5);
     if (bibKey != null) {
       bibCount++;
       citations[bibKey] = bibCount;
+    } else if (beginEnv != null) {
+      final spec = envs[beginEnv];
+      if (spec == null) continue;
+      if (spec.noun == 'Proof') {
+        open.add((beginEnv, spec.noun, null));
+        continue;
+      }
+      final count = (counters[spec.counter] ?? 0) + 1;
+      counters[spec.counter] = count;
+      final within = counterWithin.containsKey(spec.counter)
+          ? counterWithin[spec.counter]
+          : spec.within;
+      final number = switch (within) {
+        'section' => '${sectionCounters[0]}.$count',
+        'subsection' => '${sectionCounters[0]}.${sectionCounters[1]}.$count',
+        _ => '$count',
+      };
+      theoremNumbers[map[m.start]] = number;
+      open.add((beginEnv, spec.noun, number));
+    } else if (endEnv != null) {
+      final at = open.lastIndexWhere((e) => e.$1 == endEnv);
+      if (at >= 0) open.removeAt(at);
     } else if (labelName != null) {
       final colon = labelName.indexOf(':');
       final prefix = colon > 0 ? labelName.substring(0, colon) : '';
@@ -366,6 +455,13 @@ _collectReferences(String text) {
             ? '?'
             : sectionCounters.sublist(0, depth + 1).join('.');
         labels[labelName] = LabelInfo(number, 'section');
+      } else if (open.isNotEmpty &&
+          open.last.$3 != null &&
+          prefix != 'eq' &&
+          prefix != 'eqn') {
+        // Inside a theorem environment, \label picks up the theorem's
+        // number — except equation labels, which step their own counter.
+        labels[labelName] = LabelInfo(open.last.$3!, open.last.$2.toLowerCase());
       } else {
         final noun = _labelPrefixNouns[prefix] ?? 'item';
         final count = (groupCounters[prefix] ?? 0) + 1;
@@ -378,9 +474,20 @@ _collectReferences(String text) {
       for (var i = level + 1; i < sectionCounters.length; i++) {
         sectionCounters[i] = 0;
       }
+      // \newtheorem{env}{Noun}[section]: the counter restarts with the
+      // sectioning counter it's declared within.
+      for (final spec in envs.values) {
+        final within = counterWithin.containsKey(spec.counter)
+            ? counterWithin[spec.counter]
+            : spec.within;
+        if ((within == 'section' && level == 0) ||
+            (within == 'subsection' && level <= 1)) {
+          counters.remove(spec.counter);
+        }
+      }
     }
   }
-  return (labels: labels, citations: citations);
+  return (labels: labels, citations: citations, theoremNumbers: theoremNumbers);
 }
 
 /// Replaces `\ref`/`\eqref`/`\cref`/`\Cref`/`\cite` with resolved text and
@@ -442,12 +549,10 @@ List<DocBlock> parseLatexDocument(String source) {
   var text = stripped.text;
   var map = stripped.map;
   // Scanned from the full stripped text (preamble included, before the
-  // \begin{document} slice below drops it) so preamble-declared macros are
-  // seen; see _expandTextMacros.
+  // \begin{document} slice below drops it) so preamble-declared macros and
+  // \newtheorem declarations are seen; see _expandTextMacros.
   final macros = _parseMacroDefs(stripped.text);
-  final references = _collectReferences(stripped.text);
-  final labels = references.labels;
-  final citations = references.citations;
+  final theoremEnvs = _theoremEnvSpecs(stripped.text);
 
   final title = _argOf(text, stripped.map, r'\title');
   final author = _argOf(text, stripped.map, r'\author');
@@ -465,6 +570,13 @@ List<DocBlock> parseLatexDocument(String source) {
     map = map.sublist(bodyStart, bodyEnd);
   }
 
+  // References are collected over the body only: a \begin{theorem} inside
+  // a preamble \newcommand definition is a template, not an instance, and
+  // must not step the theorem counters.
+  final references = _collectReferences(text, map, theoremEnvs);
+  final labels = references.labels;
+  final citations = references.citations;
+
   // Footnotes are spliced out before block parsing: the call site keeps a
   // superscript-digit marker and the bodies render as end notes, so a
   // \footnote deep inside any environment still surfaces.
@@ -477,6 +589,8 @@ List<DocBlock> parseLatexDocument(String source) {
     macros: macros,
     labels: labels,
     citations: citations,
+    theoremEnvs: theoremEnvs,
+    theoremNumbers: references.theoremNumbers,
     title: title,
     author: author,
     date: date,
@@ -561,6 +675,8 @@ class _BlockParser {
     required this.macros,
     required this.labels,
     required this.citations,
+    this.theoremEnvs = const {},
+    this.theoremNumbers = const {},
     this.title,
     this.author,
     this.date,
@@ -569,6 +685,13 @@ class _BlockParser {
   final Map<String, MacroDefinition> macros;
   final Map<String, LabelInfo> labels;
   final Map<String, int> citations;
+
+  /// Theorem-like environments (standard amsthm names plus the paper's own
+  /// `\newtheorem`/`\newframedtheorem` declarations) and, keyed by
+  /// original-source offset of each instance's `\begin`, the number the
+  /// counter model assigned it (see [_collectReferences]).
+  final Map<String, TheoremEnvSpec> theoremEnvs;
+  final Map<int, String> theoremNumbers;
   final ({String value, List<int> sourceMap})? title;
   final ({String value, List<int> sourceMap})? author;
   final ({String value, List<int> sourceMap})? date;
@@ -951,7 +1074,7 @@ class _BlockParser {
           i = next;
           continue;
         }
-        final theoremNoun = _theoremEnvironmentNouns[name];
+        final theoremNoun = theoremEnvs[name]?.noun ?? _theoremEnvironmentNouns[name];
         if (theoremNoun != null) {
           flushParagraph();
           var theoremBody = body;
@@ -971,17 +1094,11 @@ class _BlockParser {
               theoremBodyStart += close + 1;
             }
           }
-          // This parser doesn't count theorem environments on its own (see
-          // TheoremBlock) — it looks up whatever number \label/\cref
-          // already assigned the first \label found inside, so the two
-          // agree without a second counting scheme to keep in sync.
-          String? number;
-          final labelMatch = RegExp(
-            r'\\label\{([^}]*)\}',
-          ).firstMatch(theoremBody);
-          if (labelMatch != null) {
-            number = labels[labelMatch.group(1)]?.number;
-          }
+          // The number the counter model assigned this instance (see
+          // _collectReferences), keyed by the \begin's original-source
+          // offset so it survives all the recursive slicing above; null
+          // for proofs, which LaTeX leaves unnumbered.
+          final number = theoremNumbers[map[i]];
           blocks.add(
             TheoremBlock(
               noun: theoremNoun,

@@ -181,17 +181,57 @@ See \cref{def:ro}.
       },
     );
 
-    test('an unlabeled theorem environment shows no number', () {
+    test('an unlabeled theorem environment is still numbered', () {
       final blocks = parseLatexDocument(r'''
 \begin{document}
 \begin{lemma}
-Unlabeled but still shown.
+Unlabeled but still counted.
 \end{lemma}
 \end{document}
 ''');
       final theorem = blocks.whereType<TheoremBlock>().single;
       expect(theorem.noun, 'Lemma');
-      expect(theorem.number, isNull);
+      expect(theorem.number, '1');
+    });
+
+    test(r'\newtheorem declarations drive nouns, sharing, and resets', () {
+      final blocks = parseLatexDocument(r'''
+\newtheorem{resul}{Result}[section]
+\newtheorem{conj}[resul]{Conjecture}
+\begin{document}
+\section{One}
+\begin{resul}first\end{resul}
+\begin{conj}\label{res:shared}second, shared counter\end{conj}
+\section{Two}
+\begin{resul}reset by section\end{resul}
+See \cref{res:shared}.
+\end{document}
+''');
+      final theorems = blocks.whereType<TheoremBlock>().toList();
+      expect(theorems.map((t) => t.noun), ['Result', 'Conjecture', 'Result']);
+      expect(theorems.map((t) => t.number), ['1.1', '1.2', '2.1']);
+      final crefText = inlinesOf([blocks.last])
+          .whereType<TextRun>()
+          .map((s) => s.text)
+          .join();
+      expect(crefText, contains('conjecture 1.2'));
+    });
+
+    test('an unlabeled theorem still shifts later numbers, like LaTeX', () {
+      final blocks = parseLatexDocument(r'''
+\begin{document}
+\begin{definition}unlabeled\end{definition}
+\begin{definition}\label{def:second}labeled\end{definition}
+\ref{def:second}
+\end{document}
+''');
+      final theorems = blocks.whereType<TheoremBlock>().toList();
+      expect(theorems.map((t) => t.number), ['1', '2']);
+      final refText = inlinesOf([blocks.last])
+          .whereType<TextRun>()
+          .map((s) => s.text)
+          .join();
+      expect(refText, contains('2'));
     });
 
     test('recognizes abbreviated theorem environment names', () {
