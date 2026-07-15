@@ -67,7 +67,8 @@ List<FormulaIssue> checkFormulas(
         failure.hasSpan &&
         latexSourceMap != null &&
         latexSourceMap.isNotEmpty) {
-      final unitStart = codeUnitForByte(combined, failure.start!) - preambleUnits;
+      final unitStart =
+          codeUnitForByte(combined, failure.start!) - preambleUnits;
       final unitEnd = codeUnitForByte(combined, failure.end!) - preambleUnits;
       // A negative offset means the failure is inside the synthesized macro
       // preamble itself, not the formula the user can see and edit; leave

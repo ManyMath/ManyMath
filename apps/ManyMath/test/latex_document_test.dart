@@ -138,10 +138,7 @@ This paper is about things.
 \end{document}
 ''');
       final heading = blocks.whereType<HeadingBlock>().single;
-      expect(
-        (heading.spans.single as TextRun).text,
-        'Abstract',
-      );
+      expect((heading.spans.single as TextRun).text, 'Abstract');
       final paragraph = blocks.whereType<ParagraphBlock>().single;
       expect(
         (paragraph.spans.single as TextRun).text,
@@ -163,7 +160,10 @@ See \cref{def:ro}.
         final theorem = blocks.whereType<TheoremBlock>().single;
         expect(theorem.noun, 'Definition');
         expect(theorem.number, '1');
-        final title = theorem.title!.whereType<TextRun>().map((s) => s.text).join();
+        final title = theorem.title!
+            .whereType<TextRun>()
+            .map((s) => s.text)
+            .join();
         expect(title, 'Random Oracle');
         final body = inlinesOf(
           theorem.body,
@@ -210,10 +210,9 @@ See \cref{res:shared}.
       final theorems = blocks.whereType<TheoremBlock>().toList();
       expect(theorems.map((t) => t.noun), ['Result', 'Conjecture', 'Result']);
       expect(theorems.map((t) => t.number), ['1.1', '1.2', '2.1']);
-      final crefText = inlinesOf([blocks.last])
-          .whereType<TextRun>()
-          .map((s) => s.text)
-          .join();
+      final crefText = inlinesOf([
+        blocks.last,
+      ]).whereType<TextRun>().map((s) => s.text).join();
       expect(crefText, contains('conjecture 1.2'));
     });
 
@@ -227,10 +226,9 @@ See \cref{res:shared}.
 ''');
       final theorems = blocks.whereType<TheoremBlock>().toList();
       expect(theorems.map((t) => t.number), ['1', '2']);
-      final refText = inlinesOf([blocks.last])
-          .whereType<TextRun>()
-          .map((s) => s.text)
-          .join();
+      final refText = inlinesOf([
+        blocks.last,
+      ]).whereType<TextRun>().map((s) => s.text).join();
       expect(refText, contains('2'));
     });
 
@@ -506,10 +504,9 @@ Outputs \verifyIO here.
       expect(list.items, hasLength(2), reason: 'inner \\item is not ours');
       final inner = list.items[0].whereType<ListBlock>().single;
       expect(
-        inlinesOf(inner.items.single)
-            .whereType<TextRun>()
-            .map((s) => s.text)
-            .join(),
+        inlinesOf(
+          inner.items.single,
+        ).whereType<TextRun>().map((s) => s.text).join(),
         contains('inner'),
       );
       final outer2 = inlinesOf(
@@ -532,9 +529,9 @@ Outputs \verifyIO here.
       // create a bogus extra bullet beyond it.
       final bulletsWithContent = list.items
           .where(
-            (item) => inlinesOf(item).whereType<TextRun>().any(
-              (s) => s.text.contains('only one'),
-            ),
+            (item) => inlinesOf(
+              item,
+            ).whereType<TextRun>().any((s) => s.text.contains('only one')),
           )
           .toList();
       expect(bulletsWithContent, hasLength(1));
@@ -546,10 +543,7 @@ Outputs \verifyIO here.
         r'\end{itemize}',
       );
       final item = blocks.whereType<ListBlock>().single.items.single;
-      expect(
-        item.whereType<DisplayMathBlock>().single.latex,
-        r'e^{i\pi} = -1',
-      );
+      expect(item.whereType<DisplayMathBlock>().single.latex, r'e^{i\pi} = -1');
       final text = inlinesOf(
         item,
       ).whereType<TextRun>().map((s) => s.text).join();
@@ -860,7 +854,8 @@ Three plain words here $x$ and $$y$$
     });
 
     test(r'\path is shown verbatim, like \url', () {
-      final run = parseInline(r'\path{/serai/networks/monero/}').single as TextRun;
+      final run =
+          parseInline(r'\path{/serai/networks/monero/}').single as TextRun;
       expect(run.text, '/serai/networks/monero/');
       expect(run.monospace, isTrue);
     });
@@ -951,14 +946,22 @@ Three plain words here $x$ and $$y$$
 
     test('keeps \\def as-is, including its parameter text', () {
       final preamble = extractMacroPreamble(r'\def\foo#1#2{#1 + #2}');
-      expect(preamble, r'\def\foo#1#2{#1 + #2}' '\n');
+      expect(
+        preamble,
+        r'\def\foo#1#2{#1 + #2}'
+        '\n',
+      );
     });
 
     test('preserves an optional-argument count and default', () {
       final preamble = extractMacroPreamble(
         r'\newcommand{\ip}[2]{\langle #1, #2 \rangle}',
       );
-      expect(preamble, r'\providecommand{\ip}[2]{\langle #1, #2 \rangle}' '\n');
+      expect(
+        preamble,
+        r'\providecommand{\ip}[2]{\langle #1, #2 \rangle}'
+        '\n',
+      );
     });
 
     test('ignores commented-out declarations', () {
@@ -973,14 +976,24 @@ Three plain words here $x$ and $$y$$
       // \docsvlist is a call, not a declaration; only \do's own \def should
       // be picked up.
       final preamble = extractMacroPreamble(
-        r'\def\do#1{\csdef{#1}{\mathbb{#1}}}' '\n' r'\docsvlist{N,Z,Q}',
+        r'\def\do#1{\csdef{#1}{\mathbb{#1}}}'
+        '\n'
+        r'\docsvlist{N,Z,Q}',
       );
-      expect(preamble, r'\def\do#1{\csdef{#1}{\mathbb{#1}}}' '\n');
+      expect(
+        preamble,
+        r'\def\do#1{\csdef{#1}{\mathbb{#1}}}'
+        '\n',
+      );
     });
 
     test('keeps unbraced macro names, e.g. \\newcommand\\foo{...}', () {
       final preamble = extractMacroPreamble(r'\newcommand\foo{bar}');
-      expect(preamble, r'\providecommand\foo{bar}' '\n');
+      expect(
+        preamble,
+        r'\providecommand\foo{bar}'
+        '\n',
+      );
     });
 
     test('returns an empty string when there are no declarations', () {

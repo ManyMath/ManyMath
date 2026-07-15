@@ -392,7 +392,11 @@ Map<String, TheoremEnvSpec> _theoremEnvSpecs(String text) {
   Map<String, int> citations,
   Map<int, String> theoremNumbers,
 })
-_collectReferences(String text, List<int> map, Map<String, TheoremEnvSpec> envs) {
+_collectReferences(
+  String text,
+  List<int> map,
+  Map<String, TheoremEnvSpec> envs,
+) {
   final labels = <String, LabelInfo>{};
   final citations = <String, int>{};
   final theoremNumbers = <int, String>{};
@@ -461,7 +465,10 @@ _collectReferences(String text, List<int> map, Map<String, TheoremEnvSpec> envs)
           prefix != 'eqn') {
         // Inside a theorem environment, \label picks up the theorem's
         // number — except equation labels, which step their own counter.
-        labels[labelName] = LabelInfo(open.last.$3!, open.last.$2.toLowerCase());
+        labels[labelName] = LabelInfo(
+          open.last.$3!,
+          open.last.$2.toLowerCase(),
+        );
       } else {
         final noun = _labelPrefixNouns[prefix] ?? 'item';
         final count = (groupCounters[prefix] ?? 0) + 1;
@@ -604,11 +611,8 @@ List<DocBlock> parseLatexDocument(String source) {
 
 const _superscriptDigits = '⁰¹²³⁴⁵⁶⁷⁸⁹';
 
-String _superscriptNumber(int n) => n
-    .toString()
-    .split('')
-    .map((d) => _superscriptDigits[int.parse(d)])
-    .join();
+String _superscriptNumber(int n) =>
+    n.toString().split('').map((d) => _superscriptDigits[int.parse(d)]).join();
 
 /// Splices every `\footnote{...}` (and its optional `[number]`) out of
 /// [text], leaving a superscript-digit marker mapped back to the
@@ -654,10 +658,7 @@ String _superscriptNumber(int n) => n
       i++;
       continue;
     }
-    out.add((
-      text: arg.$1,
-      map: map.sublist(at + 1, at + 1 + arg.$1.length),
-    ));
+    out.add((text: arg.$1, map: map.sublist(at + 1, at + 1 + arg.$1.length)));
     for (final unit in _superscriptNumber(out.length).codeUnits) {
       buf.writeCharCode(unit);
       outMap.add(map[i]);
@@ -717,475 +718,489 @@ class _BlockParser {
   /// Parses one block sequence. [map] carries each character of [text] back
   /// to the original document source (see [parseLatexDocument]).
   List<DocBlock> parse(String text, List<int> map) {
-  final blocks = <DocBlock>[];
-  final paragraph = StringBuffer();
-  // Stripped-text index of the first character in the buffer. Everything a
-  // paragraph accumulates is contiguous in the stripped text (block
-  // constructs flush before consuming), so one start index suffices.
-  var paragraphStart = -1;
+    final blocks = <DocBlock>[];
+    final paragraph = StringBuffer();
+    // Stripped-text index of the first character in the buffer. Everything a
+    // paragraph accumulates is contiguous in the stripped text (block
+    // constructs flush before consuming), so one start index suffices.
+    var paragraphStart = -1;
 
-  void writeParagraph(int at, String chunk) {
-    if (paragraph.isEmpty) paragraphStart = at;
-    paragraph.write(chunk);
-  }
-
-  void flushParagraph() {
-    final raw = paragraph.toString();
-    paragraph.clear();
-    final content = raw.trim();
-    if (content.isEmpty) return;
-    final leading = raw.length - raw.trimLeft().length;
-    final start = paragraphStart + leading;
-    final spans = _inline(
-      content,
-      map.sublist(start, start + content.length),
-    );
-    if (spans.isNotEmpty) blocks.add(ParagraphBlock(spans));
-  }
-
-  var i = 0;
-  while (i < text.length) {
-    // Blank line: paragraph boundary.
-    final blank = RegExp(r'\n[ \t]*\n').matchAsPrefix(text, i);
-    if (blank != null) {
-      flushParagraph();
-      i = blank.end;
-      continue;
+    void writeParagraph(int at, String chunk) {
+      if (paragraph.isEmpty) paragraphStart = at;
+      paragraph.write(chunk);
     }
 
-    // Escape pairs, consumed before any delimiter matching so that the
-    // second backslash of `\\[2pt]` never opens `\[` display math and an
-    // escaped dollar in `\$$x$` never opens `$$`. The pairs pass through
-    // verbatim; parseInline interprets them later.
-    if (text.startsWith(r'\\', i) ||
-        (text[i] == r'\' &&
-            i + 1 < text.length &&
-            r'$%&_{}#'.contains(text[i + 1]))) {
-      writeParagraph(i, text.substring(i, i + 2));
-      i += 2;
-      continue;
-    }
-
-    // Display math: $$...$$ and \[...\].
-    final dollars = _delimited(text, i, r'$$', r'$$');
-    if (dollars != null) {
-      flushParagraph();
-      blocks.add(
-        DisplayMathBlock(
-          dollars.$1.trim(),
-          sourceStart: map[i],
-          sourceEnd: _spanEnd(map, dollars.$2),
-          latexSourceMap: _trimmedSlice(map, text, i + 2, dollars.$2 - 2),
-        ),
+    void flushParagraph() {
+      final raw = paragraph.toString();
+      paragraph.clear();
+      final content = raw.trim();
+      if (content.isEmpty) return;
+      final leading = raw.length - raw.trimLeft().length;
+      final start = paragraphStart + leading;
+      final spans = _inline(
+        content,
+        map.sublist(start, start + content.length),
       );
-      i = dollars.$2;
-      continue;
+      if (spans.isNotEmpty) blocks.add(ParagraphBlock(spans));
     }
-    // A single $ opens inline math; consume the whole span verbatim into
-    // the paragraph (parseInline interprets it later). Without this, the
-    // adjacent closers/openers in '$a$$b$' would read as a $$ display
-    // opener and swallow the rest of the document.
-    if (text.startsWith(r'$', i)) {
-      final inline = _delimited(text, i, r'$', r'$');
-      if (inline != null) {
-        writeParagraph(i, text.substring(i, inline.$2));
-        i = inline.$2;
+
+    var i = 0;
+    while (i < text.length) {
+      // Blank line: paragraph boundary.
+      final blank = RegExp(r'\n[ \t]*\n').matchAsPrefix(text, i);
+      if (blank != null) {
+        flushParagraph();
+        i = blank.end;
         continue;
       }
-    }
-    final bracket = _delimited(text, i, r'\[', r'\]');
-    if (bracket != null) {
-      flushParagraph();
-      blocks.add(
-        DisplayMathBlock(
-          bracket.$1.trim(),
-          sourceStart: map[i],
-          sourceEnd: _spanEnd(map, bracket.$2),
-          latexSourceMap: _trimmedSlice(map, text, i + 2, bracket.$2 - 2),
-        ),
-      );
-      i = bracket.$2;
-      continue;
-    }
 
-    // Environments: math ones become display blocks, lists become lists.
-    final env = RegExp(r'\\begin\{([a-zA-Z*]+)\}').matchAsPrefix(text, i);
-    if (env != null) {
-      final name = env.group(1)!;
-      final end = _matchingEnvEnd(text, name, env.end);
-      if (end >= 0) {
-        final body = text.substring(env.end, end);
-        final next = end + '\\end{$name}'.length;
-        if (_mathEnvironments.contains(name)) {
-          flushParagraph();
-          blocks.add(
-            DisplayMathBlock(
-              text.substring(i, next).trim(),
-              sourceStart: map[i],
-              sourceEnd: _spanEnd(map, next),
-              latexSourceMap: _trimmedSlice(map, text, i, next),
-            ),
-          );
-          i = next;
+      // Escape pairs, consumed before any delimiter matching so that the
+      // second backslash of `\\[2pt]` never opens `\[` display math and an
+      // escaped dollar in `\$$x$` never opens `$$`. The pairs pass through
+      // verbatim; parseInline interprets them later.
+      if (text.startsWith(r'\\', i) ||
+          (text[i] == r'\' &&
+              i + 1 < text.length &&
+              r'$%&_{}#'.contains(text[i + 1]))) {
+        writeParagraph(i, text.substring(i, i + 2));
+        i += 2;
+        continue;
+      }
+
+      // Display math: $$...$$ and \[...\].
+      final dollars = _delimited(text, i, r'$$', r'$$');
+      if (dollars != null) {
+        flushParagraph();
+        blocks.add(
+          DisplayMathBlock(
+            dollars.$1.trim(),
+            sourceStart: map[i],
+            sourceEnd: _spanEnd(map, dollars.$2),
+            latexSourceMap: _trimmedSlice(map, text, i + 2, dollars.$2 - 2),
+          ),
+        );
+        i = dollars.$2;
+        continue;
+      }
+      // A single $ opens inline math; consume the whole span verbatim into
+      // the paragraph (parseInline interprets it later). Without this, the
+      // adjacent closers/openers in '$a$$b$' would read as a $$ display
+      // opener and swallow the rest of the document.
+      if (text.startsWith(r'$', i)) {
+        final inline = _delimited(text, i, r'$', r'$');
+        if (inline != null) {
+          writeParagraph(i, text.substring(i, inline.$2));
+          i = inline.$2;
           continue;
         }
-        if (_codeEnvironments.contains(name)) {
-          flushParagraph();
-          var code = body;
-          // A `[options]` group (lstlisting/minted) or minted's required
-          // `{lang}` argument sits directly against `\begin{name}}`, with no
-          // line break before it, so it can't be mistaken for a first line
-          // of code that happens to start with `[` or `{`.
-          final leadingOptions = RegExp(r'^\[[^\n]*\]').matchAsPrefix(code);
-          if (leadingOptions != null) {
-            code = code.substring(leadingOptions.end);
-          }
-          final leadingArg = RegExp(r'^\{[^\n{}]*\}').matchAsPrefix(code);
-          if (leadingArg != null) code = code.substring(leadingArg.end);
-          // The line break right after \begin{...} (and its trailing one
-          // before \end{...}) is formatting, not code.
-          if (code.startsWith('\n')) code = code.substring(1);
-          if (code.endsWith('\n')) code = code.substring(0, code.length - 1);
-          blocks.add(CodeBlock(code));
-          i = next;
-          continue;
-        }
-        if (name == 'itemize' || name == 'enumerate' || name == 'description') {
-          flushParagraph();
-          // \item only, not \itemsep and friends, and only at this list's
-          // own nesting depth — an \item inside a nested environment
-          // belongs to that environment, not this list. Content before the
-          // first \item (typically spacing commands like \itemsep0pt) is
-          // not a bullet. Each item's body is a full recursive block parse,
-          // so nested lists and display math render properly.
-          final marks = _topLevelItemMarks(body);
-          final items = <List<DocBlock>>[];
-          for (var k = 0; k < marks.length; k++) {
-            final segStart = marks[k].end;
-            final segEnd = k + 1 < marks.length
-                ? marks[k + 1].start
-                : body.length;
-            final label = _stripItemLabel(body.substring(segStart, segEnd));
-            final segment = label.$1;
-            if (segment.trim().isEmpty && label.$3 == null) continue;
-            final start = env.end + segStart + label.$2;
-            final itemBlocks = parse(
-              segment,
-              map.sublist(start, start + segment.length),
+      }
+      final bracket = _delimited(text, i, r'\[', r'\]');
+      if (bracket != null) {
+        flushParagraph();
+        blocks.add(
+          DisplayMathBlock(
+            bracket.$1.trim(),
+            sourceStart: map[i],
+            sourceEnd: _spanEnd(map, bracket.$2),
+            latexSourceMap: _trimmedSlice(map, text, i + 2, bracket.$2 - 2),
+          ),
+        );
+        i = bracket.$2;
+        continue;
+      }
+
+      // Environments: math ones become display blocks, lists become lists.
+      final env = RegExp(r'\\begin\{([a-zA-Z*]+)\}').matchAsPrefix(text, i);
+      if (env != null) {
+        final name = env.group(1)!;
+        final end = _matchingEnvEnd(text, name, env.end);
+        if (end >= 0) {
+          final body = text.substring(env.end, end);
+          final next = end + '\\end{$name}'.length;
+          if (_mathEnvironments.contains(name)) {
+            flushParagraph();
+            blocks.add(
+              DisplayMathBlock(
+                text.substring(i, next).trim(),
+                sourceStart: map[i],
+                sourceEnd: _spanEnd(map, next),
+                latexSourceMap: _trimmedSlice(map, text, i, next),
+              ),
             );
-            // \description's `[label]` is the item's required title, not an
-            // optional override like itemize/enumerate's, so it's shown
-            // (bolded) instead of being dropped — merged into the item's
-            // first paragraph so it stays run-in.
-            if (name == 'description' && label.$3 != null) {
-              // The label is real LaTeX (papers put \texttt/custom macros
-              // in there), parsed with bold as description labels are set.
-              final labelRuns = <DocInline>[
-                ...parseInline(
-                  label.$3!.trim(),
-                  bold: true,
-                  macros: macros,
-                  labels: labels,
-                  citations: citations,
-                ),
-                const TextRun(' '),
-              ];
-              if (itemBlocks.isNotEmpty && itemBlocks.first is ParagraphBlock) {
-                final first = itemBlocks.first as ParagraphBlock;
-                itemBlocks[0] = ParagraphBlock([...labelRuns, ...first.spans]);
-              } else {
-                itemBlocks.insert(0, ParagraphBlock(labelRuns));
+            i = next;
+            continue;
+          }
+          if (_codeEnvironments.contains(name)) {
+            flushParagraph();
+            var code = body;
+            // A `[options]` group (lstlisting/minted) or minted's required
+            // `{lang}` argument sits directly against `\begin{name}}`, with no
+            // line break before it, so it can't be mistaken for a first line
+            // of code that happens to start with `[` or `{`.
+            final leadingOptions = RegExp(r'^\[[^\n]*\]').matchAsPrefix(code);
+            if (leadingOptions != null) {
+              code = code.substring(leadingOptions.end);
+            }
+            final leadingArg = RegExp(r'^\{[^\n{}]*\}').matchAsPrefix(code);
+            if (leadingArg != null) code = code.substring(leadingArg.end);
+            // The line break right after \begin{...} (and its trailing one
+            // before \end{...}) is formatting, not code.
+            if (code.startsWith('\n')) code = code.substring(1);
+            if (code.endsWith('\n')) code = code.substring(0, code.length - 1);
+            blocks.add(CodeBlock(code));
+            i = next;
+            continue;
+          }
+          if (name == 'itemize' ||
+              name == 'enumerate' ||
+              name == 'description') {
+            flushParagraph();
+            // \item only, not \itemsep and friends, and only at this list's
+            // own nesting depth — an \item inside a nested environment
+            // belongs to that environment, not this list. Content before the
+            // first \item (typically spacing commands like \itemsep0pt) is
+            // not a bullet. Each item's body is a full recursive block parse,
+            // so nested lists and display math render properly.
+            final marks = _topLevelItemMarks(body);
+            final items = <List<DocBlock>>[];
+            for (var k = 0; k < marks.length; k++) {
+              final segStart = marks[k].end;
+              final segEnd = k + 1 < marks.length
+                  ? marks[k + 1].start
+                  : body.length;
+              final label = _stripItemLabel(body.substring(segStart, segEnd));
+              final segment = label.$1;
+              if (segment.trim().isEmpty && label.$3 == null) continue;
+              final start = env.end + segStart + label.$2;
+              final itemBlocks = parse(
+                segment,
+                map.sublist(start, start + segment.length),
+              );
+              // \description's `[label]` is the item's required title, not an
+              // optional override like itemize/enumerate's, so it's shown
+              // (bolded) instead of being dropped — merged into the item's
+              // first paragraph so it stays run-in.
+              if (name == 'description' && label.$3 != null) {
+                // The label is real LaTeX (papers put \texttt/custom macros
+                // in there), parsed with bold as description labels are set.
+                final labelRuns = <DocInline>[
+                  ...parseInline(
+                    label.$3!.trim(),
+                    bold: true,
+                    macros: macros,
+                    labels: labels,
+                    citations: citations,
+                  ),
+                  const TextRun(' '),
+                ];
+                if (itemBlocks.isNotEmpty &&
+                    itemBlocks.first is ParagraphBlock) {
+                  final first = itemBlocks.first as ParagraphBlock;
+                  itemBlocks[0] = ParagraphBlock([
+                    ...labelRuns,
+                    ...first.spans,
+                  ]);
+                } else {
+                  itemBlocks.insert(0, ParagraphBlock(labelRuns));
+                }
+              }
+              items.add(itemBlocks);
+            }
+            if (items.isNotEmpty) {
+              final style = switch (name) {
+                'enumerate' => ListStyle.numbered,
+                'description' => ListStyle.description,
+                _ => ListStyle.bullet,
+              };
+              blocks.add(ListBlock(style: style, items: items));
+            }
+            i = next;
+            continue;
+          }
+          if (name == 'thebibliography') {
+            flushParagraph();
+            var bibBody = body;
+            var bibBodyStart = env.end;
+            // Skip the required {widest-label} argument, e.g.
+            // \begin{thebibliography}{99}.
+            if (bibBody.startsWith('{')) {
+              final arg = _balancedArg(bibBody, 0);
+              if (arg != null) {
+                bibBody = bibBody.substring(arg.$2);
+                bibBodyStart += arg.$2;
               }
             }
-            items.add(itemBlocks);
-          }
-          if (items.isNotEmpty) {
-            final style = switch (name) {
-              'enumerate' => ListStyle.numbered,
-              'description' => ListStyle.description,
-              _ => ListStyle.bullet,
-            };
-            blocks.add(ListBlock(style: style, items: items));
-          }
-          i = next;
-          continue;
-        }
-        if (name == 'thebibliography') {
-          flushParagraph();
-          var bibBody = body;
-          var bibBodyStart = env.end;
-          // Skip the required {widest-label} argument, e.g.
-          // \begin{thebibliography}{99}.
-          if (bibBody.startsWith('{')) {
-            final arg = _balancedArg(bibBody, 0);
-            if (arg != null) {
-              bibBody = bibBody.substring(arg.$2);
-              bibBodyStart += arg.$2;
+            final marks = RegExp(
+              r'\\bibitem(?:\[[^\]]*\])?\{([^}]*)\}',
+            ).allMatches(bibBody).toList();
+            final entries = <BibliographyEntry>[];
+            for (var k = 0; k < marks.length; k++) {
+              final key = marks[k].group(1)!;
+              final segStart = marks[k].end;
+              final segEnd = k + 1 < marks.length
+                  ? marks[k + 1].start
+                  : bibBody.length;
+              final segment = bibBody.substring(segStart, segEnd);
+              final leading = segment.length - segment.trimLeft().length;
+              final trimmed = segment.trim();
+              if (trimmed.isEmpty) continue;
+              final start = bibBodyStart + segStart + leading;
+              entries.add(
+                BibliographyEntry(
+                  number: citations[key] ?? (k + 1),
+                  spans: _inline(
+                    trimmed,
+                    map.sublist(start, start + trimmed.length),
+                  ),
+                ),
+              );
             }
+            entries.sort((a, b) => a.number.compareTo(b.number));
+            if (entries.isNotEmpty) blocks.add(BibliographyBlock(entries));
+            i = next;
+            continue;
           }
-          final marks = RegExp(
-            r'\\bibitem(?:\[[^\]]*\])?\{([^}]*)\}',
-          ).allMatches(bibBody).toList();
-          final entries = <BibliographyEntry>[];
-          for (var k = 0; k < marks.length; k++) {
-            final key = marks[k].group(1)!;
-            final segStart = marks[k].end;
-            final segEnd = k + 1 < marks.length
-                ? marks[k + 1].start
-                : bibBody.length;
-            final segment = bibBody.substring(segStart, segEnd);
-            final leading = segment.length - segment.trimLeft().length;
-            final trimmed = segment.trim();
-            if (trimmed.isEmpty) continue;
-            final start = bibBodyStart + segStart + leading;
-            entries.add(
-              BibliographyEntry(
-                number: citations[key] ?? (k + 1),
-                spans: _inline(
-                  trimmed,
-                  map.sublist(start, start + trimmed.length),
+          if (name == 'quote' || name == 'quotation') {
+            flushParagraph();
+            final children = parse(body, map.sublist(env.end, end));
+            if (children.isNotEmpty) blocks.add(QuoteBlock(children));
+            i = next;
+            continue;
+          }
+          if (name == 'abstract') {
+            flushParagraph();
+            blocks.add(
+              const HeadingBlock(2, [TextRun('Abstract', bold: true)]),
+            );
+            blocks.addAll(parse(body, map.sublist(env.end, end)));
+            i = next;
+            continue;
+          }
+          // Floats: content parses in place (this renderer has no page
+          // layout to float around), centered as floats conventionally are;
+          // the [htbp] placement hint is dropped.
+          const floatKinds = {
+            'figure': 'Figure',
+            'figure*': 'Figure',
+            'table': 'Table',
+            'table*': 'Table',
+            // \DeclareCaptionType floats used by the FROSTLASS paper.
+            'oracle': 'Oracle',
+            'game': 'Game',
+          };
+          final floatKind = floatKinds[name];
+          if (floatKind != null) {
+            flushParagraph();
+            var floatBody = body;
+            var floatStart = env.end;
+            if (floatBody.startsWith('[')) {
+              final close = floatBody.indexOf(']');
+              if (close >= 0) {
+                floatBody = floatBody.substring(close + 1);
+                floatStart += close + 1;
+              }
+            }
+            _floatStack.add(floatKind);
+            final children = parse(
+              floatBody,
+              map.sublist(floatStart, floatStart + floatBody.length),
+            );
+            _floatStack.removeLast();
+            if (children.isNotEmpty) blocks.add(CenterBlock(children));
+            i = next;
+            continue;
+          }
+          if (name == 'center') {
+            flushParagraph();
+            final children = parse(body, map.sublist(env.end, end));
+            if (children.isNotEmpty) blocks.add(CenterBlock(children));
+            i = next;
+            continue;
+          }
+          // minipage/suboracle: a width-constrained box; the content parses
+          // in place, the [pos]{width} arguments are layout hints.
+          if (name == 'minipage' || name == 'suboracle') {
+            flushParagraph();
+            var boxBody = body;
+            var boxStart = env.end;
+            if (boxBody.startsWith('[')) {
+              final close = boxBody.indexOf(']');
+              if (close >= 0) {
+                boxBody = boxBody.substring(close + 1);
+                boxStart += close + 1;
+              }
+            }
+            final width = boxBody.startsWith('{')
+                ? _balancedArg(boxBody, 0)
+                : null;
+            if (width != null) {
+              boxBody = boxBody.substring(width.$2);
+              boxStart += width.$2;
+            }
+            blocks.addAll(
+              parse(boxBody, map.sublist(boxStart, boxStart + boxBody.length)),
+            );
+            i = next;
+            continue;
+          }
+          if (name == 'mdframed') {
+            flushParagraph();
+            var boxBody = body;
+            var boxStart = env.end;
+            if (boxBody.startsWith('[')) {
+              final close = boxBody.indexOf(']');
+              if (close >= 0) {
+                boxBody = boxBody.substring(close + 1);
+                boxStart += close + 1;
+              }
+            }
+            final children = parse(
+              boxBody,
+              map.sublist(boxStart, boxStart + boxBody.length),
+            );
+            if (children.isNotEmpty) blocks.add(FramedBlock(children));
+            i = next;
+            continue;
+          }
+          // appendices (the appendix package) wraps trailing sections but
+          // adds nothing visible itself.
+          if (name == 'appendices') {
+            flushParagraph();
+            blocks.addAll(parse(body, map.sublist(env.end, end)));
+            i = next;
+            continue;
+          }
+          if (name == 'tabular' || name == 'tabular*' || name == 'longtable') {
+            flushParagraph();
+            final table = _parseTabular(name, body);
+            if (table != null) blocks.add(table);
+            i = next;
+            continue;
+          }
+          if (name == 'tikzpicture' || name == 'tikzcd') {
+            flushParagraph();
+            blocks.add(DiagramBlock(name, body.trim()));
+            i = next;
+            continue;
+          }
+          final theoremNoun =
+              theoremEnvs[name]?.noun ?? _theoremEnvironmentNouns[name];
+          if (theoremNoun != null) {
+            flushParagraph();
+            var theoremBody = body;
+            var theoremBodyStart = env.end;
+            // An optional [Title], e.g. \begin{definition}[Random Oracle].
+            List<DocInline>? title;
+            if (theoremBody.startsWith('[')) {
+              final close = theoremBody.indexOf(']');
+              if (close >= 0) {
+                final titleText = theoremBody.substring(1, close);
+                final titleStart = theoremBodyStart + 1;
+                title = _inline(
+                  titleText,
+                  map.sublist(titleStart, titleStart + titleText.length),
+                );
+                theoremBody = theoremBody.substring(close + 1);
+                theoremBodyStart += close + 1;
+              }
+            }
+            // The number the counter model assigned this instance (see
+            // _collectReferences), keyed by the \begin's original-source
+            // offset so it survives all the recursive slicing above; null
+            // for proofs, which LaTeX leaves unnumbered.
+            final number = theoremNumbers[map[i]];
+            blocks.add(
+              TheoremBlock(
+                noun: theoremNoun,
+                number: number,
+                title: title,
+                body: parse(
+                  theoremBody,
+                  map.sublist(
+                    theoremBodyStart,
+                    theoremBodyStart + theoremBody.length,
+                  ),
                 ),
               ),
             );
+            i = next;
+            continue;
           }
-          entries.sort((a, b) => a.number.compareTo(b.number));
-          if (entries.isNotEmpty) blocks.add(BibliographyBlock(entries));
-          i = next;
-          continue;
         }
-        if (name == 'quote' || name == 'quotation') {
-          flushParagraph();
-          final children = parse(body, map.sublist(env.end, end));
-          if (children.isNotEmpty) blocks.add(QuoteBlock(children));
-          i = next;
-          continue;
+        // Unknown or unterminated environment: fall through as text.
+      }
+
+      // \caption{...}: a numbered "Figure N:"/"Table N:" line, the kind
+      // taken from the enclosing float (see _floatStack).
+      final caption = RegExp(r'\\caption(?![a-zA-Z])').matchAsPrefix(text, i);
+      if (caption != null) {
+        var at = _skipSpaces(text, caption.end);
+        if (at < text.length && text[at] == '[') {
+          final close = text.indexOf(']', at);
+          if (close > 0) at = _skipSpaces(text, close + 1);
         }
-        if (name == 'abstract') {
+        final arg = at < text.length && text[at] == '{'
+            ? _balancedArg(text, at)
+            : null;
+        if (arg != null) {
           flushParagraph();
-          blocks.add(const HeadingBlock(2, [TextRun('Abstract', bold: true)]));
-          blocks.addAll(parse(body, map.sublist(env.end, end)));
-          i = next;
-          continue;
-        }
-        // Floats: content parses in place (this renderer has no page
-        // layout to float around), centered as floats conventionally are;
-        // the [htbp] placement hint is dropped.
-        const floatKinds = {
-          'figure': 'Figure',
-          'figure*': 'Figure',
-          'table': 'Table',
-          'table*': 'Table',
-          // \DeclareCaptionType floats used by the FROSTLASS paper.
-          'oracle': 'Oracle',
-          'game': 'Game',
-        };
-        final floatKind = floatKinds[name];
-        if (floatKind != null) {
-          flushParagraph();
-          var floatBody = body;
-          var floatStart = env.end;
-          if (floatBody.startsWith('[')) {
-            final close = floatBody.indexOf(']');
-            if (close >= 0) {
-              floatBody = floatBody.substring(close + 1);
-              floatStart += close + 1;
-            }
-          }
-          _floatStack.add(floatKind);
-          final children = parse(
-            floatBody,
-            map.sublist(floatStart, floatStart + floatBody.length),
-          );
-          _floatStack.removeLast();
-          if (children.isNotEmpty) blocks.add(CenterBlock(children));
-          i = next;
-          continue;
-        }
-        if (name == 'center') {
-          flushParagraph();
-          final children = parse(body, map.sublist(env.end, end));
-          if (children.isNotEmpty) blocks.add(CenterBlock(children));
-          i = next;
-          continue;
-        }
-        // minipage/suboracle: a width-constrained box; the content parses
-        // in place, the [pos]{width} arguments are layout hints.
-        if (name == 'minipage' || name == 'suboracle') {
-          flushParagraph();
-          var boxBody = body;
-          var boxStart = env.end;
-          if (boxBody.startsWith('[')) {
-            final close = boxBody.indexOf(']');
-            if (close >= 0) {
-              boxBody = boxBody.substring(close + 1);
-              boxStart += close + 1;
-            }
-          }
-          final width = boxBody.startsWith('{')
-              ? _balancedArg(boxBody, 0)
-              : null;
-          if (width != null) {
-            boxBody = boxBody.substring(width.$2);
-            boxStart += width.$2;
-          }
-          blocks.addAll(
-            parse(boxBody, map.sublist(boxStart, boxStart + boxBody.length)),
-          );
-          i = next;
-          continue;
-        }
-        if (name == 'mdframed') {
-          flushParagraph();
-          var boxBody = body;
-          var boxStart = env.end;
-          if (boxBody.startsWith('[')) {
-            final close = boxBody.indexOf(']');
-            if (close >= 0) {
-              boxBody = boxBody.substring(close + 1);
-              boxStart += close + 1;
-            }
-          }
-          final children = parse(
-            boxBody,
-            map.sublist(boxStart, boxStart + boxBody.length),
-          );
-          if (children.isNotEmpty) blocks.add(FramedBlock(children));
-          i = next;
-          continue;
-        }
-        // appendices (the appendix package) wraps trailing sections but
-        // adds nothing visible itself.
-        if (name == 'appendices') {
-          flushParagraph();
-          blocks.addAll(parse(body, map.sublist(env.end, end)));
-          i = next;
-          continue;
-        }
-        if (name == 'tabular' || name == 'tabular*' || name == 'longtable') {
-          flushParagraph();
-          final table = _parseTabular(name, body);
-          if (table != null) blocks.add(table);
-          i = next;
-          continue;
-        }
-        if (name == 'tikzpicture' || name == 'tikzcd') {
-          flushParagraph();
-          blocks.add(DiagramBlock(name, body.trim()));
-          i = next;
-          continue;
-        }
-        final theoremNoun = theoremEnvs[name]?.noun ?? _theoremEnvironmentNouns[name];
-        if (theoremNoun != null) {
-          flushParagraph();
-          var theoremBody = body;
-          var theoremBodyStart = env.end;
-          // An optional [Title], e.g. \begin{definition}[Random Oracle].
-          List<DocInline>? title;
-          if (theoremBody.startsWith('[')) {
-            final close = theoremBody.indexOf(']');
-            if (close >= 0) {
-              final titleText = theoremBody.substring(1, close);
-              final titleStart = theoremBodyStart + 1;
-              title = _inline(
-                titleText,
-                map.sublist(titleStart, titleStart + titleText.length),
-              );
-              theoremBody = theoremBody.substring(close + 1);
-              theoremBodyStart += close + 1;
-            }
-          }
-          // The number the counter model assigned this instance (see
-          // _collectReferences), keyed by the \begin's original-source
-          // offset so it survives all the recursive slicing above; null
-          // for proofs, which LaTeX leaves unnumbered.
-          final number = theoremNumbers[map[i]];
+          final kind = _floatStack.isNotEmpty ? _floatStack.last : 'Figure';
+          final count = (_captionCounts[kind] ?? 0) + 1;
+          _captionCounts[kind] = count;
           blocks.add(
-            TheoremBlock(
-              noun: theoremNoun,
-              number: number,
-              title: title,
-              body: parse(
-                theoremBody,
-                map.sublist(theoremBodyStart, theoremBodyStart + theoremBody.length),
+            CaptionBlock(
+              '$kind $count',
+              _inline(arg.$1, map.sublist(at + 1, at + 1 + arg.$1.length)),
+            ),
+          );
+          i = arg.$2;
+          continue;
+        }
+      }
+
+      // Sections and \maketitle, recognized at any position.
+      final section = RegExp(
+        r'\\(sub){0,2}section\*?\{',
+      ).matchAsPrefix(text, i);
+      if (section != null) {
+        final arg = _balancedArg(text, section.end - 1);
+        if (arg != null) {
+          flushParagraph();
+          final level = 'sub'.allMatches(section[0]!).length + 1;
+          blocks.add(
+            HeadingBlock(
+              level,
+              _inline(
+                arg.$1,
+                map.sublist(section.end, section.end + arg.$1.length),
               ),
             ),
           );
-          i = next;
+          i = arg.$2;
           continue;
         }
       }
-      // Unknown or unterminated environment: fall through as text.
-    }
-
-    // \caption{...}: a numbered "Figure N:"/"Table N:" line, the kind
-    // taken from the enclosing float (see _floatStack).
-    final caption = RegExp(r'\\caption(?![a-zA-Z])').matchAsPrefix(text, i);
-    if (caption != null) {
-      var at = _skipSpaces(text, caption.end);
-      if (at < text.length && text[at] == '[') {
-        final close = text.indexOf(']', at);
-        if (close > 0) at = _skipSpaces(text, close + 1);
-      }
-      final arg = at < text.length && text[at] == '{'
-          ? _balancedArg(text, at)
-          : null;
-      if (arg != null) {
+      if (text.startsWith(r'\maketitle', i)) {
         flushParagraph();
-        final kind = _floatStack.isNotEmpty ? _floatStack.last : 'Figure';
-        final count = (_captionCounts[kind] ?? 0) + 1;
-        _captionCounts[kind] = count;
         blocks.add(
-          CaptionBlock(
-            '$kind $count',
-            _inline(arg.$1, map.sublist(at + 1, at + 1 + arg.$1.length)),
+          TitleBlock(
+            title: title?.value,
+            author: author?.value,
+            date: date?.value,
+            titleSourceMap: title?.sourceMap,
+            authorSourceMap: author?.sourceMap,
+            dateSourceMap: date?.sourceMap,
           ),
         );
-        i = arg.$2;
+        i += r'\maketitle'.length;
         continue;
       }
-    }
 
-    // Sections and \maketitle, recognized at any position.
-    final section = RegExp(r'\\(sub){0,2}section\*?\{').matchAsPrefix(text, i);
-    if (section != null) {
-      final arg = _balancedArg(text, section.end - 1);
-      if (arg != null) {
-        flushParagraph();
-        final level = 'sub'.allMatches(section[0]!).length + 1;
-        blocks.add(
-          HeadingBlock(
-            level,
-            _inline(
-              arg.$1,
-              map.sublist(section.end, section.end + arg.$1.length),
-            ),
-          ),
-        );
-        i = arg.$2;
-        continue;
-      }
+      writeParagraph(i, text[i]);
+      i++;
     }
-    if (text.startsWith(r'\maketitle', i)) {
-      flushParagraph();
-      blocks.add(
-        TitleBlock(
-          title: title?.value,
-          author: author?.value,
-          date: date?.value,
-          titleSourceMap: title?.sourceMap,
-          authorSourceMap: author?.sourceMap,
-          dateSourceMap: date?.sourceMap,
-        ),
-      );
-      i += r'\maketitle'.length;
-      continue;
-    }
-
-    writeParagraph(i, text[i]);
-    i++;
-  }
-  flushParagraph();
-  return blocks;
+    flushParagraph();
+    return blocks;
   }
 
   /// Reduces a `tabular` body to its cell grid. Rows split at depth-0
@@ -1815,13 +1830,31 @@ List<DocInline> parseInline(
         // Size and family switches this renderer doesn't model: scope-level
         // no-ops, far better than leaking the raw command.
         const inertDeclarations = {
-          'rmfamily', 'sffamily', 'normalfont', 'upshape', 'mdseries',
-          'scshape', 'sc', 'rm', 'sf',
-          'tiny', 'scriptsize', 'footnotesize', 'small', 'normalsize',
-          'large', 'Large', 'LARGE', 'huge', 'Huge',
-          'centering', 'raggedright', 'raggedleft',
+          'rmfamily',
+          'sffamily',
+          'normalfont',
+          'upshape',
+          'mdseries',
+          'scshape',
+          'sc',
+          'rm',
+          'sf',
+          'tiny',
+          'scriptsize',
+          'footnotesize',
+          'small',
+          'normalsize',
+          'large',
+          'Large',
+          'LARGE',
+          'huge',
+          'Huge',
+          'centering',
+          'raggedright',
+          'raggedleft',
         };
-        final styled = boldDeclarations.contains(word) ||
+        final styled =
+            boldDeclarations.contains(word) ||
             italicDeclarations.contains(word) ||
             monospaceDeclarations.contains(word);
         if (styled || inertDeclarations.contains(word)) {
@@ -1850,25 +1883,63 @@ List<DocInline> parseInline(
         // Commands that produce nothing visible, with the number of braced
         // arguments to swallow along with them.
         const droppedCommands = {
-          'clearpage': 0, 'cleardoublepage': 0, 'newpage': 0,
-          'pagebreak': 0, 'nopagebreak': 0, 'linebreak': 0, 'break': 0,
-          'noindent': 0, 'indent': 0, 'ignorespaces': 0,
-          'smallskip': 0, 'medskip': 0, 'bigskip': 0,
-          'sloppy': 0, 'frenchspacing': 0, 'relax': 0, 'leavevmode': 0,
-          'strut': 0, 'vfill': 0, 'dotfill': 0, 'hrulefill': 0,
-          'tableofcontents': 0, 'listoffigures': 0, 'listoftables': 0,
-          'printindex': 0, 'printglossary': 0, 'printglossaries': 0,
-          'makeindex': 0, 'makeglossaries': 0, 'appendix': 0,
-          'footnotemark': 0, 'qed': 0, 'allowdisplaybreaks': 0,
-          'onehalfspacing': 0, 'singlespacing': 0, 'doublespacing': 0,
-          'pagestyle': 1, 'thispagestyle': 1, 'pagenumbering': 1,
-          'linespread': 1, 'captionsetup': 1, 'markright': 1,
-          'setlength': 2, 'addtolength': 2, 'setcounter': 2,
-          'addtocounter': 2, 'numberwithin': 2, 'markboth': 2,
+          'clearpage': 0,
+          'cleardoublepage': 0,
+          'newpage': 0,
+          'pagebreak': 0,
+          'nopagebreak': 0,
+          'linebreak': 0,
+          'break': 0,
+          'noindent': 0,
+          'indent': 0,
+          'ignorespaces': 0,
+          'smallskip': 0,
+          'medskip': 0,
+          'bigskip': 0,
+          'sloppy': 0,
+          'frenchspacing': 0,
+          'relax': 0,
+          'leavevmode': 0,
+          'strut': 0,
+          'vfill': 0,
+          'dotfill': 0,
+          'hrulefill': 0,
+          'tableofcontents': 0,
+          'listoffigures': 0,
+          'listoftables': 0,
+          'printindex': 0,
+          'printglossary': 0,
+          'printglossaries': 0,
+          'makeindex': 0,
+          'makeglossaries': 0,
+          'appendix': 0,
+          'footnotemark': 0,
+          'qed': 0,
+          'allowdisplaybreaks': 0,
+          'onehalfspacing': 0,
+          'singlespacing': 0,
+          'doublespacing': 0,
+          'pagestyle': 1,
+          'thispagestyle': 1,
+          'pagenumbering': 1,
+          'linespread': 1,
+          'captionsetup': 1,
+          'markright': 1,
+          'setlength': 2,
+          'addtolength': 2,
+          'setcounter': 2,
+          'addtocounter': 2,
+          'numberwithin': 2,
+          'markboth': 2,
           'addcontentsline': 3,
-          'bibliographystyle': 1, 'index': 1, 'glsadd': 1,
+          'bibliographystyle': 1,
+          'index': 1,
+          'glsadd': 1,
           'includegraphics': 1,
-          'phantom': 1, 'hphantom': 1, 'vphantom': 1, 'rule': 2,
+          'phantom': 1,
+          'hphantom': 1,
+          'vphantom': 1,
+          'rule': 2,
         };
         final dropArgs = droppedCommands[word];
         if (dropArgs != null) {
@@ -1898,22 +1969,62 @@ List<DocInline> parseInline(
     }
 
     const styles = {
-      r'\textbf{': (bold: true, italic: false, monospace: false, underline: false),
-      r'\textit{': (bold: false, italic: true, monospace: false, underline: false),
-      r'\emph{': (bold: false, italic: true, monospace: false, underline: false),
+      r'\textbf{': (
+        bold: true,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\textit{': (
+        bold: false,
+        italic: true,
+        monospace: false,
+        underline: false,
+      ),
+      r'\emph{': (
+        bold: false,
+        italic: true,
+        monospace: false,
+        underline: false,
+      ),
       // \paragraph/\subparagraph are LaTeX's smallest sectioning commands:
       // a bold run-in heading that stays on the same line as the text that
       // follows it, unlike \section and friends, so they belong here rather
       // than alongside HeadingBlock.
-      r'\paragraph{': (bold: true, italic: false, monospace: false, underline: false),
-      r'\subparagraph{': (bold: true, italic: false, monospace: false, underline: false),
-      r'\texttt{': (bold: false, italic: false, monospace: true, underline: false),
-      r'\underline{': (bold: false, italic: false, monospace: false, underline: true),
+      r'\paragraph{': (
+        bold: true,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\subparagraph{': (
+        bold: true,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\texttt{': (
+        bold: false,
+        italic: false,
+        monospace: true,
+        underline: false,
+      ),
+      r'\underline{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: true,
+      ),
       // \gls{term}: the glossaries package's inline reference to a term
       // defined elsewhere (\newglossaryentry), which this parser doesn't
       // track. Showing the term itself, unstyled, beats leaking the raw
       // command.
-      r'\gls{': (bold: false, italic: false, monospace: false, underline: false),
+      r'\gls{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
       // \textsuperscript{...}: shown at normal size rather than actually
       // raised — this parser's inline model has no notion of baseline
       // offset — but that beats leaking the raw command.
@@ -2303,7 +2414,11 @@ int? _readNewcommandEnd(String text, int from) {
 /// after the keyword; null when the declaration is too malformed to safely
 /// extract.
 int? _readDefEnd(String text, int from) {
-  final afterName = _readMacroName(text, _skipSpaces(text, from), allowGroup: false);
+  final afterName = _readMacroName(
+    text,
+    _skipSpaces(text, from),
+    allowGroup: false,
+  );
   if (afterName == null) return null;
   // Parameter text (`#1#2...`, or delimiter tokens) runs up to the body's
   // opening brace; TeX doesn't allow an unescaped `{` inside it.
@@ -2437,7 +2552,11 @@ MacroDefinition? _parseNewcommandDeclaration(String text, int from) {
 }
 
 MacroDefinition? _parseDefDeclaration(String text, int from) {
-  final name = _readMacroNameSpan(text, _skipSpaces(text, from), allowGroup: false);
+  final name = _readMacroNameSpan(
+    text,
+    _skipSpaces(text, from),
+    allowGroup: false,
+  );
   if (name == null) return null;
   var i = name.$2;
   var argCount = 0;
@@ -2452,7 +2571,11 @@ MacroDefinition? _parseDefDeclaration(String text, int from) {
 
 /// Like [_readMacroName], but also returns the name itself (without its
 /// leading backslash).
-(String, int)? _readMacroNameSpan(String text, int at, {bool allowGroup = true}) {
+(String, int)? _readMacroNameSpan(
+  String text,
+  int at, {
+  bool allowGroup = true,
+}) {
   if (allowGroup && at < text.length && text[at] == '{') {
     final arg = _balancedArg(text, at);
     if (arg == null) return null;
@@ -2473,7 +2596,11 @@ MacroDefinition? _parseDefDeclaration(String text, int from) {
 /// parameters, no conditionals, no expansion inside an argument before it's
 /// substituted. Bounded recursion (macros expanding to other macros) keeps
 /// a definition cycle from looping forever.
-String _expandTextMacros(String text, Map<String, MacroDefinition> macros, [int depth = 0]) {
+String _expandTextMacros(
+  String text,
+  Map<String, MacroDefinition> macros, [
+  int depth = 0,
+]) {
   if (macros.isEmpty || depth > 8 || !text.contains(r'\')) return text;
   final out = StringBuffer();
   var i = 0;
@@ -2510,7 +2637,9 @@ String _expandTextMacros(String text, Map<String, MacroDefinition> macros, [int 
     final args = <String>[];
     for (var a = 0; a < macro.argCount; a++) {
       j = _skipSpaces(text, j);
-      final arg = j < text.length && text[j] == '{' ? _balancedArg(text, j) : null;
+      final arg = j < text.length && text[j] == '{'
+          ? _balancedArg(text, j)
+          : null;
       if (arg == null) break;
       args.add(arg.$1);
       j = arg.$2;

@@ -28,9 +28,7 @@ void _collectLeaks(List<DocInline> spans, List<String> leaks, String where) {
     if (span is! TextRun) continue;
     for (final m in _leakRe.allMatches(span.text)) {
       final start = m.start < 30 ? 0 : m.start - 30;
-      final end = m.end + 40 > span.text.length
-          ? span.text.length
-          : m.end + 40;
+      final end = m.end + 40 > span.text.length ? span.text.length : m.end + 40;
       leaks.add('[$where] …${span.text.substring(start, end)}…');
     }
   }
@@ -113,8 +111,10 @@ void main() {
 
       if (_verbose) {
         // ignore: avoid_print
-        print('=== ${paper.name}: ${leaks.length} leaks, '
-            '${issues.length} formula issues');
+        print(
+          '=== ${paper.name}: ${leaks.length} leaks, '
+          '${issues.length} formula issues',
+        );
         for (final leak in leaks) {
           // ignore: avoid_print
           print('LEAK  $leak');

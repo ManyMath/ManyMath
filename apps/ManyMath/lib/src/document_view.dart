@@ -317,9 +317,7 @@ class DocumentView extends StatelessWidget {
         );
       case TableBlock():
         final columnCount = block.rows
-            .map(
-              (row) => row.fold<int>(0, (sum, cell) => sum + cell.colSpan),
-            )
+            .map((row) => row.fold<int>(0, (sum, cell) => sum + cell.colSpan))
             .fold<int>(0, (a, b) => a > b ? a : b);
         return Padding(
           padding: EdgeInsets.symmetric(vertical: 8 * zoom),
