@@ -19,15 +19,13 @@ jobs:
       - name: Checkout Ratex
         uses: actions/checkout@v4
         with:
-          repository: sneurlax/ratex
+          repository: ManyMath/ratex
           path: ratex
-          token: ${{ secrets.DEPENDENCY_CHECKOUT_TOKEN || github.token }}
       - name: Checkout ManyUI
         uses: actions/checkout@v4
         with:
-          repository: sneurlax/manyui
+          repository: ManyMath/ManyUI
           path: ManyUI
-          token: ${{ secrets.DEPENDENCY_CHECKOUT_TOKEN || github.token }}
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -62,15 +60,13 @@ jobs:
       - name: Checkout Ratex
         uses: actions/checkout@v4
         with:
-          repository: sneurlax/ratex
+          repository: ManyMath/ratex
           path: ratex
-          token: ${{ secrets.DEPENDENCY_CHECKOUT_TOKEN || github.token }}
       - name: Checkout ManyUI
         uses: actions/checkout@v4
         with:
-          repository: sneurlax/manyui
+          repository: ManyMath/ManyUI
           path: ManyUI
-          token: ${{ secrets.DEPENDENCY_CHECKOUT_TOKEN || github.token }}
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
