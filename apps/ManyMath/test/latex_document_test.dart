@@ -588,6 +588,24 @@ Outputs \verifyIO here.
       expect(item.whereType<DisplayMathBlock>().single.latex, r'\zeta(2)');
     });
 
+    test(r'\thanks is dropped and \today renders a real date', () {
+      final spans = parseInline(r'Joshua Babb\thanks{Cypher Stack}, \today.');
+      final text = spans.whereType<TextRun>().map((s) => s.text).join();
+      expect(text, isNot(contains(r'\thanks')));
+      expect(text, isNot(contains('Cypher Stack')));
+      expect(text, isNot(contains(r'\today')));
+      expect(text, contains(RegExp(r'Joshua Babb, [A-Z][a-z]+ \d+, \d{4}\.')));
+    });
+
+    test('TeX dash and quote ligatures render, except in monospace', () {
+      final spans = parseInline("pages 3--5 --- ``quoted'' \\texttt{fe--x}");
+      final text = spans.whereType<TextRun>().map((s) => s.text).join();
+      expect(text, contains('3–5'));
+      expect(text, contains('—'));
+      expect(text, contains('“quoted”'));
+      expect(text, contains('fe--x'), reason: 'tt fonts keep literal dashes');
+    });
+
     test(r'\title {X} with whitespace before the brace still parses', () {
       final blocks = parseLatexDocument(
         '\\title {Spaced}\n\\begin{document}\\maketitle\\end{document}',

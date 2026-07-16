@@ -187,7 +187,8 @@ class DocumentStore extends ChangeNotifier {
     return <ManyMathDocument>[
       for (var index = 0; index < papers.length; index++)
         ManyMathDocument(
-          id: '${timestamp.microsecondsSinceEpoch.toRadixString(36)}'
+          id:
+              '${timestamp.microsecondsSinceEpoch.toRadixString(36)}'
               '-seed-$index',
           name: papers[index].name,
           source: papers[index].source,

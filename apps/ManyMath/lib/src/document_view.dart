@@ -340,12 +340,18 @@ class DocumentView extends StatelessWidget {
                             horizontal: 10 * zoom,
                             vertical: 6 * zoom,
                           ),
-                          child: Text.rich(
-                            TextSpan(
-                              children: _inlineSpans(
-                                context,
-                                cell.spans,
-                                _bodySize * 0.95,
+                          // Cap the cell width so a prose-length cell wraps
+                          // (LaTeX p{...} columns do the same) instead of
+                          // stretching the table far past the page.
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(maxWidth: 300 * zoom),
+                            child: Text.rich(
+                              TextSpan(
+                                children: _inlineSpans(
+                                  context,
+                                  cell.spans,
+                                  _bodySize * 0.95,
+                                ),
                               ),
                             ),
                           ),

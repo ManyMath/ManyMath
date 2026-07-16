@@ -71,6 +71,11 @@ void _walkBlocks(List<DocBlock> blocks, List<String> leaks, String where) {
       case FootnoteBlock():
         _collectLeaks(block.spans, leaks, '$where/fn');
       case TitleBlock():
+        for (final metadata in [block.title, block.author, block.date]) {
+          if (metadata != null) {
+            _collectLeaks(parseInline(metadata), leaks, '$where/title');
+          }
+        }
       case DisplayMathBlock():
       case CodeBlock():
       case DiagramBlock():

@@ -1695,6 +1695,13 @@ List<DocInline> parseInline(
       // multi-author headers commonly typeset it.
       r'\and': ' · ',
     };
+    // \today renders the current date, like a LaTeX compile does.
+    if (source.startsWith(r'\today', i) &&
+        (i + 6 >= source.length || !_isAsciiLetter(source[i + 6]))) {
+      run.write(_todayText());
+      i += 6;
+      continue;
+    }
     final symbol = symbolCommands.entries
         .where(
           (e) =>
@@ -1936,6 +1943,9 @@ List<DocInline> parseInline(
           'index': 1,
           'glsadd': 1,
           'includegraphics': 1,
+          // \thanks is a title-page footnote; this renderer drops it
+          // rather than cluttering the centered title block.
+          'thanks': 1,
           'phantom': 1,
           'hphantom': 1,
           'vphantom': 1,
@@ -2061,11 +2071,62 @@ List<DocInline> parseInline(
       }
     }
 
+    // TeX ligatures: --- em dash, -- en dash, ``/'' curly double quotes,
+    // ` a curly opening single quote. Typewriter fonts disable ligatures
+    // in TeX, so monospace runs keep their literal characters.
+    if (!monospace) {
+      if (source.startsWith('---', i)) {
+        run.write('—');
+        i += 3;
+        continue;
+      }
+      if (source.startsWith('--', i)) {
+        run.write('–');
+        i += 2;
+        continue;
+      }
+      if (source.startsWith('``', i)) {
+        run.write('“');
+        i += 2;
+        continue;
+      }
+      if (source.startsWith("''", i)) {
+        run.write('”');
+        i += 2;
+        continue;
+      }
+      if (source[i] == '`') {
+        run.write('‘');
+        i++;
+        continue;
+      }
+    }
+
     run.write(source[i]);
     i++;
   }
   flushRun();
   return spans;
+}
+
+/// "July 15, 2026" — what LaTeX's \today typesets on compile day.
+String _todayText() {
+  const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  final now = DateTime.now();
+  return '${months[now.month - 1]} ${now.day}, ${now.year}';
 }
 
 /// Word and formula counts over parsed [blocks], for the status bar.
