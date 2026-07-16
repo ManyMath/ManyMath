@@ -15,6 +15,10 @@
 /// jump from a failed formula back to the exact editor selection.
 library;
 
+import 'tikz_diagram.dart';
+
+export 'tikz_diagram.dart' show TikzDiagram;
+
 /// One block of a parsed document, in source order.
 sealed class DocBlock {
   const DocBlock();
@@ -194,6 +198,15 @@ final class DiagramBlock extends DocBlock {
 
   final String kind;
   final String code;
+}
+
+/// A `tikzpicture` whose whole body fits the interpreter's subset (see
+/// `tikz_diagram.dart`): drawn for real. Pictures outside the subset stay
+/// [DiagramBlock] placeholders.
+final class TikzDiagramBlock extends DocBlock {
+  const TikzDiagramBlock(this.diagram);
+
+  final TikzDiagram diagram;
 }
 
 /// One `\footnote{...}`, collected during parsing and appended to the end
@@ -1079,7 +1092,14 @@ class _BlockParser {
           }
           if (name == 'tikzpicture' || name == 'tikzcd') {
             flushParagraph();
-            blocks.add(DiagramBlock(name, body.trim()));
+            final diagram = name == 'tikzpicture'
+                ? parseTikzDiagram(body)
+                : null;
+            blocks.add(
+              diagram != null
+                  ? TikzDiagramBlock(diagram)
+                  : DiagramBlock(name, body.trim()),
+            );
             i = next;
             continue;
           }
@@ -2185,6 +2205,10 @@ String _todayText() {
           countSpans(block.spans);
         case FootnoteBlock():
           countSpans(block.spans);
+        case TikzDiagramBlock():
+          for (final line in block.diagram.allLabelLines) {
+            countSpans(parseInline(line));
+          }
         case DiagramBlock():
           break;
       }

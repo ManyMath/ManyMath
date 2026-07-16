@@ -38,6 +38,10 @@ Iterable<DocInline> inlinesOf(List<DocBlock> blocks) sync* {
         yield* block.spans;
       case FootnoteBlock():
         yield* block.spans;
+      case TikzDiagramBlock():
+        for (final line in block.diagram.allLabelLines) {
+          yield* parseInline(line);
+        }
       case TitleBlock():
       case DisplayMathBlock():
       case CodeBlock():

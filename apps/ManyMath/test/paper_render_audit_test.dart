@@ -76,12 +76,41 @@ void _walkBlocks(List<DocBlock> blocks, List<String> leaks, String where) {
             _collectLeaks(parseInline(metadata), leaks, '$where/title');
           }
         }
+      case TikzDiagramBlock():
+        for (final line in block.diagram.allLabelLines) {
+          _collectLeaks(parseInline(line), leaks, '$where/tikz');
+        }
       case DisplayMathBlock():
       case CodeBlock():
       case DiagramBlock():
         break;
     }
   }
+}
+
+int _countPlaceholders(List<DocBlock> blocks) {
+  var count = 0;
+  for (final block in blocks) {
+    switch (block) {
+      case DiagramBlock():
+        count++;
+      case ListBlock():
+        for (final item in block.items) {
+          count += _countPlaceholders(item);
+        }
+      case QuoteBlock():
+        count += _countPlaceholders(block.children);
+      case TheoremBlock():
+        count += _countPlaceholders(block.body);
+      case CenterBlock():
+        count += _countPlaceholders(block.children);
+      case FramedBlock():
+        count += _countPlaceholders(block.children);
+      default:
+        break;
+    }
+  }
+  return count;
 }
 
 void main() {
@@ -131,6 +160,11 @@ void main() {
       }
 
       expect(leaks, isEmpty, reason: 'raw LaTeX leaked into prose');
+      expect(
+        _countPlaceholders(blocks),
+        0,
+        reason: 'diagram fell back to the "not rendered" placeholder',
+      );
       expect(
         issues.map((issue) => '${issue.message} in: ${issue.latex}').toList(),
         isEmpty,

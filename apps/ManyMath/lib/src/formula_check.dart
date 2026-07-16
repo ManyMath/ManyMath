@@ -165,7 +165,10 @@ List<FormulaIssue> checkFormulas(
           checkInlines(block.spans);
         case CodeBlock():
         case DiagramBlock():
-        // Verbatim/diagram source: nothing to check, RaTeX never sees it.
+        case TikzDiagramBlock():
+        // Verbatim/diagram source: nothing to check. Diagram labels have no
+        // editor source spans, so the error panel could not jump to them;
+        // the render audit still leak-checks their parsed spans.
       }
     }
   }
