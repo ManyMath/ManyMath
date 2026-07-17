@@ -13,6 +13,8 @@ class ManyMathDocument {
     required this.name,
     required this.source,
     required this.updatedAt,
+    this.seedKey,
+    this.seedSource,
   });
 
   factory ManyMathDocument.fromJson(Object? value) {
@@ -41,11 +43,15 @@ class ManyMathDocument {
     } on RangeError {
       throw const FormatException('Document timestamp is out of range.');
     }
+    final rawSeedKey = value['seedKey'];
+    final rawSeedSource = value['seedSource'];
     return ManyMathDocument(
       id: id,
       name: name,
       source: source,
       updatedAt: updatedAt,
+      seedKey: rawSeedKey is String && rawSeedKey.isNotEmpty ? rawSeedKey : null,
+      seedSource: rawSeedSource is String ? rawSeedSource : null,
     );
   }
 
@@ -53,17 +59,27 @@ class ManyMathDocument {
   final String name;
   final String source;
   final DateTime updatedAt;
+  // Stable key linking this document to its originating paper; null for
+  // user-created documents. Never changes, even if the user renames the doc.
+  final String? seedKey;
+  // The paper source as it was when this document was seeded. If source ==
+  // seedSource the user has not made edits, so the doc can be refreshed safely.
+  final String? seedSource;
 
   ManyMathDocument copyWith({
     String? name,
     String? source,
     DateTime? updatedAt,
+    String? seedKey,
+    String? seedSource,
   }) {
     return ManyMathDocument(
       id: id,
       name: name ?? this.name,
       source: source ?? this.source,
       updatedAt: updatedAt ?? this.updatedAt,
+      seedKey: seedKey ?? this.seedKey,
+      seedSource: seedSource ?? this.seedSource,
     );
   }
 
@@ -72,6 +88,8 @@ class ManyMathDocument {
     'name': name,
     'source': source,
     'updatedAt': updatedAt.millisecondsSinceEpoch,
+    if (seedKey != null) 'seedKey': seedKey,
+    if (seedSource != null) 'seedSource': seedSource,
   };
 }
 
@@ -114,6 +132,7 @@ class DocumentStore extends ChangeNotifier {
 
   static const documentsStorageKey = 'manymath.documents.v1';
   static const recoveryStorageKey = 'manymath.documents.recovery.v1';
+  static const removedSeedsStorageKey = 'manymath.settings.removedSeeds';
   static const _lastOpenKey = 'manymath.settings.lastOpen';
   static const _splitKey = 'manymath.settings.split';
   static const _themeModeKey = 'manymath.settings.themeMode';
@@ -176,8 +195,14 @@ class DocumentStore extends ChangeNotifier {
       );
     }
 
+    // Reconcile the stored document list against the current bundled papers.
+    // This runs on every load so that papers added or updated in a new build
+    // are reflected for returning users without clearing their data.
+    final removedSeeds = _decodeRemovedSeeds(storage.getString(removedSeedsStorageKey));
+    final seedsChanged = _reconcileSeeds(documents, now ?? DateTime.now, removedSeeds);
+
     final store = DocumentStore._(storage, documents, now ?? DateTime.now);
-    if (raw == null || needsRepair) {
+    if (raw == null || needsRepair || seedsChanged) {
       await store._persistImmediately();
     }
     return store;
@@ -193,8 +218,88 @@ class DocumentStore extends ChangeNotifier {
           name: papers[index].name,
           source: papers[index].source,
           updatedAt: timestamp,
+          seedKey: papers[index].name,
+          seedSource: papers[index].source,
         ),
     ];
+  }
+
+  // Mutates [documents] in place. Returns true if any change was made so the
+  // caller knows to persist the updated list.
+  //
+  // Three passes:
+  //   1. Migration: assign seedKey/seedSource to pre-existing seed docs that
+  //      pre-date this field by matching their source against current papers.
+  //   2. Refresh: if a seed doc's source still equals its seedSource (user
+  //      hasn't edited it) but the paper has since been updated, replace it.
+  //   3. Injection: add any papers not yet represented in the store, skipping
+  //      papers the user has explicitly removed (tracked in [removedSeeds]).
+  static bool _reconcileSeeds(
+    List<ManyMathDocument> documents,
+    DateTime Function() now,
+    Set<String> removedSeeds,
+  ) {
+    var changed = false;
+
+    // Pass 1: migrate docs without a seedKey by matching source content.
+    for (var i = 0; i < documents.length; i++) {
+      if (documents[i].seedKey != null) continue;
+      for (final paper in papers) {
+        if (documents[i].source == paper.source) {
+          documents[i] = documents[i].copyWith(
+            seedKey: paper.name,
+            seedSource: paper.source,
+          );
+          changed = true;
+          break;
+        }
+      }
+    }
+
+    // Pass 2: refresh unmodified seed docs whose paper source has changed.
+    for (var i = 0; i < documents.length; i++) {
+      final doc = documents[i];
+      if (doc.seedKey == null || doc.seedSource == null) continue;
+      if (doc.source != doc.seedSource) continue; // user has edits -- skip
+      for (final paper in papers) {
+        if (paper.name != doc.seedKey) continue;
+        if (paper.source == doc.source) break; // already current
+        documents[i] = doc.copyWith(
+          source: paper.source,
+          seedSource: paper.source,
+        );
+        changed = true;
+        break;
+      }
+    }
+
+    // Pass 3: inject papers missing from the store entirely, unless the user
+    // already removed them (tracked in removedSeeds).
+    final seededKeys = <String>{
+      for (final doc in documents)
+        if (doc.seedKey != null) doc.seedKey!,
+    };
+    final timestamp = now();
+    var seedIndex = documents.length;
+    for (final paper in papers) {
+      if (seededKeys.contains(paper.name) || removedSeeds.contains(paper.name)) continue;
+      documents.add(
+        ManyMathDocument(
+          id:
+              '${timestamp.microsecondsSinceEpoch.toRadixString(36)}'
+              '-seed-$seedIndex',
+          name: paper.name,
+          source: paper.source,
+          updatedAt: timestamp,
+          seedKey: paper.name,
+          seedSource: paper.source,
+        ),
+      );
+      seedIndex++;
+      changed = true;
+    }
+
+    return changed;
   }
 
   List<ManyMathDocument> get documents =>
@@ -293,11 +398,30 @@ class DocumentStore extends ChangeNotifier {
     _checkOpen();
     final index = _indexOf(id);
     if (index < 0) return false;
+    final doc = _documents[index];
     _documents.removeAt(index);
     if (lastOpenedId == id) lastOpenedId = null;
+    if (doc.seedKey != null) _persistRemovedSeed(doc.seedKey!);
     _persist();
     notifyListeners();
     return true;
+  }
+
+  void _persistRemovedSeed(String key) {
+    _enqueue('record removed seed', () async {
+      final current = _decodeRemovedSeeds(_preferences.getString(removedSeedsStorageKey));
+      current.add(key);
+      return _preferences.setString(removedSeedsStorageKey, jsonEncode(current.toList()));
+    });
+  }
+
+  static Set<String> _decodeRemovedSeeds(String? raw) {
+    if (raw == null) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) return decoded.whereType<String>().toSet();
+    } catch (_) {}
+    return {};
   }
 
   bool updateSource(String id, String source) {

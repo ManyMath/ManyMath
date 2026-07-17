@@ -67,7 +67,10 @@ void main() {
     });
 
     final store = await DocumentStore.load();
-    expect(store.documents.map((document) => document.id), <String>['valid']);
+    // The valid doc is preserved first; bundled papers are injected after it
+    // because no tombstones exist to suppress them.
+    expect(store.documents.first.id, 'valid');
+    expect(store.documents.length, 1 + papers.length);
     expect(store.recoveryPayload, raw);
 
     final normalized =
@@ -77,7 +80,7 @@ void main() {
               )!,
             )
             as List<Object?>;
-    expect(normalized, hasLength(1));
+    expect(normalized, hasLength(1 + papers.length));
   });
 
   test('an out-of-range timestamp is isolated as one corrupt entry', () async {
@@ -101,7 +104,10 @@ void main() {
 
     final store = await DocumentStore.load();
 
-    expect(store.documents.map((document) => document.id), <String>['valid']);
+    // The valid doc is preserved; bundled papers are also injected because no
+    // tombstones exist to suppress them.
+    expect(store.documents.first.id, 'valid');
+    expect(store.documents.length, 1 + papers.length);
     expect(store.recoveryPayload, raw);
   });
 
@@ -122,13 +128,29 @@ void main() {
   );
 
   test(
-    'valid empty store stays empty instead of being silently reseeded',
+    'empty store with no tombstones is backfilled with bundled papers',
     () async {
       SharedPreferences.setMockInitialValues(<String, Object>{
         DocumentStore.documentsStorageKey: '[]',
       });
       final store = await DocumentStore.load();
-      expect(store.documents, isEmpty);
+      // No tombstones -> all bundled papers are injected so the library isn't
+      // silently empty. Explicit removals are tracked separately and respected.
+      expect(store.documents, hasLength(papers.length));
+    },
+  );
+
+  test(
+    'explicitly removed seed docs are not reinjected on reload',
+    () async {
+      final store = await DocumentStore.load(now: () => DateTime.utc(2026));
+      for (final doc in store.documents.toList()) {
+        store.remove(doc.id);
+      }
+      await store.close();
+
+      final reloaded = await DocumentStore.load();
+      expect(reloaded.documents, isEmpty);
     },
   );
 
