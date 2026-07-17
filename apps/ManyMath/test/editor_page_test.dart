@@ -10,6 +10,13 @@ import 'package:manymath/src/latex_document.dart';
 import 'package:manyui/manyui.dart';
 
 void main() {
+  Future<void> settleRender(WidgetTester tester) async {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 25)),
+    );
+    await tester.pumpAndSettle();
+  }
+
   Future<DocumentStore> pumpEditor(
     WidgetTester tester, {
     Size size = const Size(1280, 800),
@@ -47,6 +54,7 @@ void main() {
     );
     await tester.pump();
     await tester.pump();
+    await settleRender(tester);
     return documentStore;
   }
 
@@ -260,6 +268,26 @@ Content.
     expect(tester.getSemantics(sectionTitle).headingLevel, 3);
   });
 
+  testWidgets('preview lazily builds only visible document blocks', (
+    tester,
+  ) async {
+    final source = List<String>.generate(
+      300,
+      (index) => 'Paragraph $index',
+    ).join('\n\n');
+    await pumpEditor(tester, initialSource: source);
+
+    expect(find.text('Paragraph 0'), findsOneWidget);
+    expect(find.text('Paragraph 299'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(DocumentView),
+        matching: find.byType(CustomScrollView),
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('editing marks the preview pending until an explicit render', (
     tester,
   ) async {
@@ -286,11 +314,61 @@ Content.
     expect(find.text('Original document'), findsOneWidget);
 
     await tester.tap(find.text('Render'));
-    await tester.pump();
+    await settleRender(tester);
 
     expect(find.text('Rendered'), findsOneWidget);
     expect(find.text('Second edit is longer'), findsNWidgets(2));
     expect(find.text('Original document'), findsNothing);
+  });
+
+  testWidgets('auto render updates the preview and disables manual render', (
+    tester,
+  ) async {
+    var formulaChecks = 0;
+    await pumpEditor(
+      tester,
+      initialSource: 'Original document',
+      formulaChecker: (_) {
+        formulaChecks += 1;
+        return const <FormulaIssue>[];
+      },
+    );
+    expect(formulaChecks, 1);
+
+    final renderButton = find.byWidgetPredicate(
+      (widget) => widget is MButton && widget.semanticLabel == 'Render preview',
+    );
+    expect(tester.widget<MButton>(renderButton).onPressed, isNotNull);
+
+    await tester.tap(find.bySemanticsLabel('Auto render'));
+    await tester.pump();
+
+    expect(tester.widget<MButton>(renderButton).onPressed, isNull);
+
+    await tester.enterText(
+      find.bySemanticsLabel('LaTeX source editor'),
+      'First automatic draft',
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Changes pending'), findsOneWidget);
+    expect(find.text('Original document'), findsOneWidget);
+
+    await tester.enterText(
+      find.bySemanticsLabel('LaTeX source editor'),
+      'Rendered automatically',
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Changes pending'), findsOneWidget);
+    expect(find.text('Original document'), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 50));
+    await settleRender(tester);
+
+    expect(find.text('Changes pending'), findsNothing);
+    expect(find.text('Rendered automatically'), findsNWidgets(2));
+    expect(formulaChecks, 1);
   });
 
   testWidgets('renderer failure offers a working retry', (tester) async {
@@ -308,7 +386,7 @@ Content.
 
     await tester.tap(find.text('Retry'));
     await tester.pump();
-    await tester.pump();
+    await settleRender(tester);
 
     expect(attempts, 2);
     expect(find.text('Rendered'), findsOneWidget);
@@ -330,7 +408,7 @@ Content.
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
-    await tester.pump();
+    await settleRender(tester);
 
     expect(find.text('Rendered'), findsOneWidget);
     expect(find.text('Keyboard render'), findsNWidgets(2));

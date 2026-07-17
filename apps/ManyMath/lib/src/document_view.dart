@@ -45,13 +45,31 @@ class DocumentView extends StatelessWidget {
                 ? const EdgeInsets.symmetric(horizontal: 12, vertical: 20)
                 : const EdgeInsets.symmetric(horizontal: 24, vertical: 30);
             final paperPadding = compact ? 24.0 : 48.0;
-            return ListView(
-              padding: canvasPadding,
-              children: <Widget>[
-                Center(
-                  child: Container(
-                    constraints: const BoxConstraints(maxWidth: 760),
-                    padding: EdgeInsets.all(paperPadding),
+            final centeredHorizontalPadding = math.max(
+              canvasPadding.left,
+              (constraints.maxWidth - 760) / 2,
+            );
+            final textStyle = TextStyle(
+              color: const Color(0xFF18201C),
+              fontSize: _bodySize,
+              height: 1.55,
+              fontFamily: 'Georgia',
+              fontFamilyFallback: const <String>[
+                'Times New Roman',
+                'Noto Serif',
+                'serif',
+              ],
+            );
+            return CustomScrollView(
+              slivers: <Widget>[
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(
+                    centeredHorizontalPadding,
+                    canvasPadding.top,
+                    centeredHorizontalPadding,
+                    canvasPadding.bottom,
+                  ),
+                  sliver: DecoratedSliver(
                     decoration: BoxDecoration(
                       color: const Color(0xFFFFFFFF),
                       borderRadius: BorderRadius.circular(3),
@@ -64,31 +82,26 @@ class DocumentView extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: DefaultTextStyle(
-                      style: TextStyle(
-                        color: const Color(0xFF18201C),
-                        fontSize: _bodySize,
-                        height: 1.55,
-                        fontFamily: 'Georgia',
-                        fontFamilyFallback: const <String>[
-                          'Times New Roman',
-                          'Noto Serif',
-                          'serif',
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: <Widget>[
-                          if (blocks.isEmpty)
-                            Text(
-                              'No rendered content',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: const Color(0xFF64716B)),
+                    sliver: SliverPadding(
+                      padding: EdgeInsets.all(paperPadding),
+                      sliver: blocks.isEmpty
+                          ? SliverToBoxAdapter(
+                              child: DefaultTextStyle(
+                                style: textStyle,
+                                child: const Text(
+                                  'No rendered content',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(color: Color(0xFF64716B)),
+                                ),
+                              ),
+                            )
+                          : SliverList.builder(
+                              itemCount: blocks.length,
+                              itemBuilder: (context, index) => DefaultTextStyle(
+                                style: textStyle,
+                                child: _buildBlock(context, blocks[index]),
+                              ),
                             ),
-                          for (final block in blocks)
-                            _buildBlock(context, block),
-                        ],
-                      ),
                     ),
                   ),
                 ),

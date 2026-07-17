@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:manyui/manyui.dart';
@@ -19,6 +20,22 @@ import 'tex_files.dart';
 
 const double editorCompactBreakpoint = 780;
 const double documentBrowserBreakpoint = 1100;
+const Duration autoRenderDelay = Duration(milliseconds: 350);
+
+typedef _ParsedDocument = ({
+  List<DocBlock> blocks,
+  String macroPreamble,
+  ({int words, int formulas}) counts,
+});
+
+_ParsedDocument _parseDocument(String source) {
+  final blocks = parseLatexDocument(source);
+  return (
+    blocks: blocks,
+    macroPreamble: extractMacroPreamble(source),
+    counts: countDocument(blocks),
+  );
+}
 
 enum EditorSurface { source, preview }
 
@@ -66,6 +83,7 @@ class _EditorPageState extends State<EditorPage>
   EditorSurface _compactSurface = EditorSurface.source;
   bool _engineLoading = true;
   bool _engineReady = false;
+  bool _autoRender = false;
   bool _changesPending = false;
   bool _documentsVisible = true;
   bool _problemsExpanded = false;
@@ -77,6 +95,8 @@ class _EditorPageState extends State<EditorPage>
   bool _sourceMinimized = false;
   bool _previewMinimized = false;
   final GlobalKey _previewPaneKey = GlobalKey();
+  Timer? _autoRenderTimer;
+  int _renderGeneration = 0;
   int? _lastRenderMilliseconds;
   var _saveRevision = 0;
 
@@ -114,6 +134,7 @@ class _EditorPageState extends State<EditorPage>
 
   @override
   void dispose() {
+    _autoRenderTimer?.cancel();
     if (store.onPersistError == _handlePersistError) {
       store.onPersistError = null;
     }
@@ -149,7 +170,7 @@ class _EditorPageState extends State<EditorPage>
         _engineLoading = false;
         _engineReady = true;
       });
-      _render();
+      unawaited(_render());
     } on Object catch (error) {
       if (!mounted) return;
       setState(() {
@@ -171,6 +192,7 @@ class _EditorPageState extends State<EditorPage>
       _saving = true;
       _saveError = null;
     });
+    if (_autoRender) _scheduleAutoRender();
     unawaited(_confirmSaved(revision));
   }
 
@@ -184,21 +206,68 @@ class _EditorPageState extends State<EditorPage>
     setState(() => _saving = false);
   }
 
-  void _render() {
+  void _scheduleAutoRender() {
+    _autoRenderTimer?.cancel();
+    _autoRenderTimer = Timer(autoRenderDelay, () {
+      _autoRenderTimer = null;
+      unawaited(_render(validateFormulas: false));
+    });
+  }
+
+  void _renderManually() {
+    if (!_autoRender) unawaited(_render());
+  }
+
+  void _setAutoRender(bool enabled) {
+    setState(() => _autoRender = enabled);
+    if (enabled && _changesPending) {
+      _scheduleAutoRender();
+    } else if (!enabled) {
+      _autoRenderTimer?.cancel();
+      _autoRenderTimer = null;
+      _renderGeneration += 1;
+    }
+  }
+
+  Future<void> _render({bool validateFormulas = true}) async {
     if (!_engineReady) return;
+    _autoRenderTimer?.cancel();
+    _autoRenderTimer = null;
+    final generation = ++_renderGeneration;
+    final source = _source.text;
     final stopwatch = Stopwatch()..start();
-    final blocks = parseLatexDocument(_source.text);
-    final macroPreamble = extractMacroPreamble(_source.text);
-    final issues = widget.formulaChecker != null
-        ? widget.formulaChecker!(blocks)
-        : checkFormulas(blocks, macroPreamble: macroPreamble);
+
+    // Flutter's compute() uses the current event loop on web, but runs this
+    // pure parsing phase in an isolate on native. Auto render reaches this
+    // after its debounce timer, so the latest keystroke has already painted.
+    final parsed = kIsWeb
+        ? _parseDocument(source)
+        : await compute(_parseDocument, source, debugLabel: 'ManyMath parse');
+    if (!mounted || generation != _renderGeneration || source != _source.text) {
+      return;
+    }
+
+    // Auto render relies on each RatexMath widget's own error presentation.
+    // Running this preflight would synchronously render every formula once
+    // before the preview renders visible formulas again.
+    final issues = validateFormulas
+        ? widget.formulaChecker != null
+              ? widget.formulaChecker!(parsed.blocks)
+              : checkFormulas(
+                  parsed.blocks,
+                  macroPreamble: parsed.macroPreamble,
+                )
+        : const <FormulaIssue>[];
+    if (!mounted || generation != _renderGeneration || source != _source.text) {
+      return;
+    }
     stopwatch.stop();
     setState(() {
       if (issues.isNotEmpty && _issues.isEmpty) _problemsExpanded = true;
-      _blocks = blocks;
-      _macroPreamble = macroPreamble;
+      _blocks = parsed.blocks;
+      _macroPreamble = parsed.macroPreamble;
       _issues = issues;
-      _counts = countDocument(blocks);
+      _counts = parsed.counts;
       _changesPending = false;
       _lastRenderMilliseconds = stopwatch.elapsedMilliseconds;
     });
@@ -260,7 +329,7 @@ class _EditorPageState extends State<EditorPage>
       _saveError = null;
     });
     store.lastOpenedId = document.id;
-    _render();
+    unawaited(_render());
   }
 
   Future<void> _createDocument() async {
@@ -512,8 +581,10 @@ class _EditorPageState extends State<EditorPage>
 
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.enter, control: true): _render,
-        const SingleActivator(LogicalKeyboardKey.enter, meta: true): _render,
+        const SingleActivator(LogicalKeyboardKey.enter, control: true):
+            _renderManually,
+        const SingleActivator(LogicalKeyboardKey.enter, meta: true):
+            _renderManually,
         const SingleActivator(LogicalKeyboardKey.keyS, control: true): () {
           unawaited(_saveNow());
         },
@@ -573,7 +644,10 @@ class _EditorPageState extends State<EditorPage>
                 onPressed: _showDocuments,
               ),
               MButton(
-                onPressed: _engineReady ? _render : null,
+                semanticLabel: 'Render preview',
+                onPressed: _engineReady && !_autoRender
+                    ? _renderManually
+                    : null,
                 size: MButtonSize.sm,
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
@@ -583,6 +657,21 @@ class _EditorPageState extends State<EditorPage>
                     Text('Render'),
                   ],
                 ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  MSwitch(
+                    initialValue: _autoRender,
+                    enabled: _engineReady,
+                    semanticLabel: 'Auto render',
+                    onChanged: _setAutoRender,
+                  ),
+                  if (MediaQuery.sizeOf(context).width >= 900) ...<Widget>[
+                    const SizedBox(width: 6),
+                    const Text('Auto render'),
+                  ],
+                ],
               ),
               _FileMenu(
                 onCreate: _createDocument,
