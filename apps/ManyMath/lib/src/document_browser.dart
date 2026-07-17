@@ -13,6 +13,7 @@ class DocumentBrowser extends StatelessWidget {
     required this.onCreate,
     required this.onAction,
     this.onClose,
+    this.onMinimize,
     super.key,
   });
 
@@ -22,6 +23,7 @@ class DocumentBrowser extends StatelessWidget {
   final VoidCallback onCreate;
   final void Function(ManyMathDocument, DocumentAction) onAction;
   final VoidCallback? onClose;
+  final VoidCallback? onMinimize;
 
   @override
   Widget build(BuildContext context) {
@@ -50,6 +52,13 @@ class DocumentBrowser extends StatelessWidget {
                     size: MButtonSize.xs,
                     onPressed: onCreate,
                   ),
+                  if (onMinimize != null)
+                    MIconButton(
+                      icon: MIconData.chevronLeft,
+                      label: 'Minimize documents',
+                      size: MButtonSize.xs,
+                      onPressed: onMinimize,
+                    ),
                   if (onClose != null)
                     MIconButton(
                       icon: MIconData.close,

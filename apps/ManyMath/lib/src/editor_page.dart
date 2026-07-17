@@ -73,10 +73,17 @@ class _EditorPageState extends State<EditorPage>
   String? _engineError;
   String? _saveError;
   double _previewZoom = 1;
+  bool _documentsMinimized = false;
+  bool _sourceMinimized = false;
+  bool _previewMinimized = false;
+  final GlobalKey _previewPaneKey = GlobalKey();
   int? _lastRenderMilliseconds;
   var _saveRevision = 0;
 
   DocumentStore get store => widget.store;
+
+  bool get _previewMaximized =>
+      _documentsMinimized && _sourceMinimized && !_previewMinimized;
 
   @override
   void initState() {
@@ -605,14 +612,21 @@ class _EditorPageState extends State<EditorPage>
                 children: <Widget>[
                   if (showDocuments) ...<Widget>[
                     SizedBox(
-                      width: 244,
-                      child: DocumentBrowser(
-                        store: store,
-                        selectedId: _document.id,
-                        onSelect: _selectDocument,
-                        onCreate: _createDocument,
-                        onAction: _handleDocumentAction,
-                      ),
+                      width: _documentsMinimized ? 52 : 244,
+                      child: _documentsMinimized
+                          ? _MinimizedPane(
+                              title: 'Documents',
+                              icon: MIconData.folder,
+                              onExpand: _toggleDocumentsMinimized,
+                            )
+                          : DocumentBrowser(
+                              store: store,
+                              selectedId: _document.id,
+                              onSelect: _selectDocument,
+                              onCreate: _createDocument,
+                              onAction: _handleDocumentAction,
+                              onMinimize: _toggleDocumentsMinimized,
+                            ),
                     ),
                     const MDivider(orientation: MDividerOrientation.vertical),
                   ],
@@ -671,6 +685,67 @@ class _EditorPageState extends State<EditorPage>
   }
 
   Widget _buildSplitWorkspace() {
+    if (_sourceMinimized && _previewMinimized) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SizedBox(
+            width: 52,
+            child: _MinimizedPane(
+              title: 'Source',
+              icon: MIconData.fileText,
+              onExpand: _toggleSourceMinimized,
+            ),
+          ),
+          const MDivider(orientation: MDividerOrientation.vertical),
+          SizedBox(
+            width: 52,
+            child: _MinimizedPane(
+              title: 'Preview',
+              icon: MIconData.fileText,
+              onExpand: _togglePreviewMinimized,
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (_sourceMinimized) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SizedBox(
+            width: 52,
+            child: _MinimizedPane(
+              title: 'Source',
+              icon: MIconData.fileText,
+              onExpand: _toggleSourceMinimized,
+            ),
+          ),
+          const MDivider(orientation: MDividerOrientation.vertical),
+          Expanded(child: _buildPreviewPane(showMaximize: true)),
+        ],
+      );
+    }
+
+    if (_previewMinimized) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Expanded(child: _buildSourcePane()),
+          const MDivider(orientation: MDividerOrientation.vertical),
+          SizedBox(
+            width: 52,
+            child: _MinimizedPane(
+              title: 'Preview',
+              icon: MIconData.fileText,
+              onExpand: _togglePreviewMinimized,
+            ),
+          ),
+        ],
+      );
+    }
+
     final split = store.splitRatio.clamp(0.3, 0.7);
     return MResizable(
       semanticLabel: 'Source and preview pane sizes',
@@ -687,7 +762,7 @@ class _EditorPageState extends State<EditorPage>
           id: 'preview',
           minSize: 0.3,
           maxSize: 0.7,
-          child: _buildPreviewPane(),
+          child: _buildPreviewPane(showMaximize: true),
         ),
       ],
     );
@@ -704,6 +779,12 @@ class _EditorPageState extends State<EditorPage>
             title: 'Source',
             subtitle: texFileName(_document.name),
             actions: <Widget>[
+              MIconButton(
+                icon: MIconData.chevronLeft,
+                label: 'Minimize source',
+                size: MButtonSize.xs,
+                onPressed: _toggleSourceMinimized,
+              ),
               MIconButton(
                 icon: MIconData.copy,
                 label: 'Copy LaTeX source',
@@ -765,8 +846,9 @@ class _EditorPageState extends State<EditorPage>
     );
   }
 
-  Widget _buildPreviewPane() {
+  Widget _buildPreviewPane({bool showMaximize = false}) {
     return _PreviewPane(
+      key: _previewPaneKey,
       blocks: _blocks,
       macroPreamble: _macroPreamble,
       zoom: _previewZoom,
@@ -778,7 +860,31 @@ class _EditorPageState extends State<EditorPage>
           : () => _setZoom(_previewZoom - 0.1),
       onResetZoom: _previewZoom == 1 ? null : () => _setZoom(1),
       onZoomIn: _previewZoom >= 1.4 ? null : () => _setZoom(_previewZoom + 0.1),
+      maximized: _previewMaximized,
+      onToggleMaximize: showMaximize ? _togglePreviewMaximized : null,
+      onMinimize: showMaximize ? _togglePreviewMinimized : null,
     );
+  }
+
+  void _togglePreviewMaximized() {
+    setState(() {
+      final shouldMaximize = !_previewMaximized;
+      _documentsMinimized = shouldMaximize;
+      _sourceMinimized = shouldMaximize;
+      _previewMinimized = false;
+    });
+  }
+
+  void _toggleDocumentsMinimized() {
+    setState(() => _documentsMinimized = !_documentsMinimized);
+  }
+
+  void _toggleSourceMinimized() {
+    setState(() => _sourceMinimized = !_sourceMinimized);
+  }
+
+  void _togglePreviewMinimized() {
+    setState(() => _previewMinimized = !_previewMinimized);
   }
 }
 
@@ -902,6 +1008,57 @@ class _PaneHeader extends StatelessWidget {
   }
 }
 
+class _MinimizedPane extends StatelessWidget {
+  const _MinimizedPane({
+    required this.title,
+    required this.icon,
+    required this.onExpand,
+  });
+
+  final String title;
+  final MIconData icon;
+  final VoidCallback onExpand;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = MTheme.of(context);
+    return Semantics(
+      label: 'Expand $title pane',
+      button: true,
+      container: true,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          key: ValueKey<String>('expand-$title-pane'),
+          behavior: HitTestBehavior.opaque,
+          onTap: onExpand,
+          child: ColoredBox(
+            color: theme.colors.card,
+            child: Column(
+              children: <Widget>[
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: MIcon(icon, size: 16, excludeFromSemantics: true),
+                ),
+                const SizedBox(height: 10),
+                const MDivider(),
+                Expanded(
+                  child: Center(
+                    child: RotatedBox(
+                      quarterTurns: 3,
+                      child: Text(title, style: theme.typography.caption),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PreviewPane extends StatelessWidget {
   const _PreviewPane({
     required this.blocks,
@@ -913,6 +1070,10 @@ class _PreviewPane extends StatelessWidget {
     required this.onZoomOut,
     required this.onResetZoom,
     required this.onZoomIn,
+    required this.maximized,
+    required this.onToggleMaximize,
+    required this.onMinimize,
+    super.key,
   });
 
   final List<DocBlock> blocks;
@@ -924,6 +1085,9 @@ class _PreviewPane extends StatelessWidget {
   final VoidCallback? onZoomOut;
   final VoidCallback? onResetZoom;
   final VoidCallback? onZoomIn;
+  final bool maximized;
+  final VoidCallback? onToggleMaximize;
+  final VoidCallback? onMinimize;
 
   @override
   Widget build(BuildContext context) {
@@ -961,44 +1125,121 @@ class _PreviewPane extends StatelessWidget {
                   label: 'Zoom in',
                   onPressed: onZoomIn,
                 ),
+                if (onMinimize != null)
+                  MIconButton(
+                    icon: MIconData.chevronRight,
+                    label: 'Minimize preview',
+                    size: MButtonSize.xs,
+                    onPressed: onMinimize,
+                  ),
+                if (onToggleMaximize != null)
+                  MIconButton(
+                    icon: maximized ? MIconData.restore : MIconData.maximize,
+                    label: maximized
+                        ? 'Restore split view'
+                        : 'Maximize preview',
+                    size: MButtonSize.xs,
+                    onPressed: onToggleMaximize,
+                  ),
               ],
             ),
           ),
           const MDivider(),
           Expanded(
-            child: engineError != null
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: MAlert(
-                        title: 'Renderer unavailable',
-                        variant: MAlertVariant.destructive,
-                        message: engineError!,
-                        maxWidth: 520,
-                        actions: <Widget>[
-                          MButton(
-                            variant: MButtonVariant.outline,
-                            onPressed: onRetry,
-                            child: const Text('Retry'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                : engineLoading
-                ? const Center(
-                    child: MLoadingState(message: 'Loading typesetting engine'),
-                  )
-                : DocumentView(
-                    blocks: blocks,
-                    macroPreamble: macroPreamble,
-                    zoom: zoom,
-                  ),
+            child: _PreviewContent(
+              blocks: blocks,
+              macroPreamble: macroPreamble,
+              zoom: zoom,
+              engineLoading: engineLoading,
+              engineError: engineError,
+              onRetry: onRetry,
+            ),
           ),
         ],
       ),
     );
   }
+}
+
+class _PreviewContent extends StatefulWidget {
+  const _PreviewContent({
+    required this.blocks,
+    required this.macroPreamble,
+    required this.zoom,
+    required this.engineLoading,
+    required this.engineError,
+    required this.onRetry,
+  });
+
+  final List<DocBlock> blocks;
+  final String macroPreamble;
+  final double zoom;
+  final bool engineLoading;
+  final String? engineError;
+  final VoidCallback onRetry;
+
+  @override
+  State<_PreviewContent> createState() => _PreviewContentState();
+}
+
+class _PreviewContentState extends State<_PreviewContent> {
+  late Widget _content;
+
+  @override
+  void initState() {
+    super.initState();
+    _content = _buildContent(widget);
+  }
+
+  @override
+  void didUpdateWidget(covariant _PreviewContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.blocks != widget.blocks ||
+        oldWidget.macroPreamble != widget.macroPreamble ||
+        oldWidget.zoom != widget.zoom ||
+        oldWidget.engineLoading != widget.engineLoading ||
+        oldWidget.engineError != widget.engineError) {
+      _content = _buildContent(widget);
+    }
+  }
+
+  Widget _buildContent(_PreviewContent preview) {
+    if (preview.engineError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: MAlert(
+            title: 'Renderer unavailable',
+            variant: MAlertVariant.destructive,
+            message: preview.engineError!,
+            maxWidth: 520,
+            actions: <Widget>[
+              MButton(
+                variant: MButtonVariant.outline,
+                onPressed: preview.onRetry,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (preview.engineLoading) {
+      return const Center(
+        child: MLoadingState(message: 'Loading typesetting engine'),
+      );
+    }
+    return RepaintBoundary(
+      child: DocumentView(
+        blocks: preview.blocks,
+        macroPreamble: preview.macroPreamble,
+        zoom: preview.zoom,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => _content;
 }
 
 class _SymbolButton extends StatelessWidget {

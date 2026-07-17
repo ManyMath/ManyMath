@@ -75,6 +75,88 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('desktop panes independently minimize, expand, and fullscreen', (
+    tester,
+  ) async {
+    await pumpEditor(tester);
+
+    expect(find.bySemanticsLabel('Minimize documents'), findsOneWidget);
+    expect(find.bySemanticsLabel('Minimize source'), findsOneWidget);
+    expect(find.bySemanticsLabel('Minimize preview'), findsOneWidget);
+
+    await tester.tap(find.bySemanticsLabel('Minimize documents'));
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey<String>('expand-Documents-pane')),
+      findsOneWidget,
+    );
+    expect(find.byType(EditableText), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('expand-Documents-pane')),
+    );
+    await tester.pump();
+
+    expect(find.bySemanticsLabel('Minimize documents'), findsOneWidget);
+    expect(find.byType(EditableText), findsOneWidget);
+
+    await tester.tap(find.bySemanticsLabel('Minimize source'));
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey<String>('expand-Source-pane')),
+      findsOneWidget,
+    );
+    expect(find.byType(MResizable), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey<String>('expand-Source-pane')));
+    await tester.pump();
+
+    expect(find.byType(MResizable), findsOneWidget);
+
+    await tester.tap(find.bySemanticsLabel('Minimize preview'));
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey<String>('expand-Preview-pane')),
+      findsOneWidget,
+    );
+    expect(find.byType(EditableText), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey<String>('expand-Preview-pane')));
+    await tester.pump();
+
+    expect(find.byType(MResizable), findsOneWidget);
+
+    expect(find.bySemanticsLabel('Maximize preview'), findsOneWidget);
+    await tester.tap(find.bySemanticsLabel('Maximize preview'));
+    await tester.pump();
+
+    expect(find.byType(MResizable), findsNothing);
+    expect(find.byType(EditableText), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('expand-Documents-pane')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('expand-Source-pane')),
+      findsOneWidget,
+    );
+    expect(find.bySemanticsLabel('Restore split view'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey<String>('expand-Source-pane')));
+    await tester.pump();
+
+    expect(find.byType(MResizable), findsOneWidget);
+    expect(find.byType(EditableText), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('expand-Documents-pane')),
+      findsOneWidget,
+    );
+    expect(find.bySemanticsLabel('Maximize preview'), findsOneWidget);
+  });
+
   testWidgets('compact workspace switches between source and preview', (
     tester,
   ) async {
