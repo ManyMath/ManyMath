@@ -53,8 +53,9 @@ class DocumentView extends StatelessWidget {
               color: const Color(0xFF18201C),
               fontSize: _bodySize,
               height: 1.55,
-              fontFamily: 'Georgia',
+              fontFamily: 'Latin Modern Roman',
               fontFamilyFallback: const <String>[
+                'Georgia',
                 'Times New Roman',
                 'Noto Serif',
                 'serif',

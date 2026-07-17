@@ -26,3 +26,14 @@ dev_dependencies:
 
 flutter:
   uses-material-design: false
+  fonts:
+    - family: Latin Modern Roman
+      fonts:
+        - asset: fonts/lmroman10-regular.otf
+        - asset: fonts/lmroman10-bold.otf
+          weight: 700
+        - asset: fonts/lmroman10-italic.otf
+          style: italic
+        - asset: fonts/lmroman10-bolditalic.otf
+          weight: 700
+          style: italic

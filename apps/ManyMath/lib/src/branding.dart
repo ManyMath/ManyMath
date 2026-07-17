@@ -25,7 +25,8 @@ class ManyMathMark extends StatelessWidget {
                 'Σ',
                 style: TextStyle(
                   color: theme.colors.primaryForeground,
-                  fontFamily: 'Georgia',
+                  fontFamily: 'Latin Modern Roman',
+                  fontFamilyFallback: const <String>['Georgia', 'serif'],
                   fontSize: size * 0.62,
                   height: 1,
                   fontWeight: FontWeight.w700,
