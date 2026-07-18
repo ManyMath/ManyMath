@@ -1,5 +1,3 @@
-import 'sample_document.dart';
-
 /// A built-in starting point for a local ManyMath document.
 class DocumentTemplate {
   const DocumentTemplate({
@@ -27,12 +25,6 @@ const blankTemplate = DocumentTemplate(
 Start typing here.
 \end{document}
 ''',
-);
-
-const articleTemplate = DocumentTemplate(
-  name: 'Article',
-  description: 'A short mathematical article using the Basel problem.',
-  source: sampleDocument,
 );
 
 const problemSetTemplate = DocumentTemplate(
@@ -113,7 +105,6 @@ This limit is the reason $\frac{d}{dx} \sin x = \cos x$.
 
 const documentTemplates = <DocumentTemplate>[
   blankTemplate,
-  articleTemplate,
   problemSetTemplate,
   lectureNotesTemplate,
 ];
