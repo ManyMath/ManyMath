@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manymath/src/latex_document.dart';
+import 'package:manymath/src/papers/frostlass_thresholdization.dart';
 
 /// Every inline span reachable from [blocks], in document order — a
 /// convenience for tests that assert over the text/math of nested block
@@ -294,6 +295,22 @@ Ignored trailer.
       final constructStart = source.indexOf(r'$x+\oops$');
       expect(math.sourceStart, constructStart);
       expect(math.sourceEnd, constructStart + r'$x+\oops$'.length);
+    });
+
+    test('FROSTLASS paper lists all six authors', () {
+      final title = parseLatexDocument(
+        frostlassThresholdizationSource,
+      ).whereType<TitleBlock>().single;
+      for (final name in <String>[
+        'Joshua Babb',
+        'Brandon Goodell',
+        'Luke Parker',
+        'Rigo Salazar',
+        'Freeman Slaughter',
+        'Luke Szramowski',
+      ]) {
+        expect(title.author, contains(name));
+      }
     });
 
     test('parses sections with levels', () {

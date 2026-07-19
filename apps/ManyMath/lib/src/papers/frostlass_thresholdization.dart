@@ -526,30 +526,19 @@ const frostlassThresholdizationSource = r'''
 }
 
 
-% \author{
-%     Joshua Babb\thanks{Cypher Stack} \\ % First line for the first author
-%     \and
-%     Brandon Goodell\protect\footnotemark[1] \\ % First line for the second author
-%     % \and
-%     % Luke Parker \\
-%     \and 
-%     Rigo Salazar\protect\footnotemark[1] \\ % First line for the third author
-%     \and
-%     Freeman Slaughter\protect\footnotemark[1] \\
-%     \and 
-%     Luke Szramowski\protect\footnotemark[1]
-% }
-
-\author[1]{Joshua Babb}
-\author[1]{Brandon Goodell}
-\author[1]{Rigo Salazar}
-\author[1,2,\large{\Letter}]{Freeman Slaughter} 
-\author[1]{Luke Szramowski}
-
-\affil[1]{Cypher Stack}
-\affil[2]{University of South Florida, Tampa FL, USA}
-\affil[\Letter]{\url{fslaughter@usf.edu}}
-
+\author{
+    Joshua Babb\thanks{Cypher Stack} \\
+    \and
+    Brandon Goodell\protect\footnotemark[1] \\
+    \and
+    Luke Parker \\
+    \and
+    Rigo Salazar\protect\footnotemark[1] \\
+    \and
+    Freeman Slaughter\protect\footnotemark[1] \\
+    \and
+    Luke Szramowski\protect\footnotemark[1]
+}
 
 \date{}
 
