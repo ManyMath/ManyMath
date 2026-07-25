@@ -1,6 +1,5 @@
 import 'papers/carrot_core_audit.dart';
 import 'papers/fcmpp_implementation_audit.dart';
-import 'papers/frost_clsag_rosetta_stone.dart';
 import 'papers/frostlass_code_audit.dart';
 import 'papers/frostlass_thresholdization.dart';
 import 'papers/rage_audit.dart';
@@ -47,9 +46,5 @@ const papers = <PaperDocument>[
   PaperDocument(
     name: 'T-CLSAG Implementation Security Audit',
     source: tclsagImplementationReviewSource,
-  ),
-  PaperDocument(
-    name: 'FROST × CLSAG Rosetta Stone',
-    source: frostClsagRosettaStoneSource,
   ),
 ];

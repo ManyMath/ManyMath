@@ -1,4 +1,4 @@
-/// Renders all 8 bundled papers through the document parser and audits the
+/// Renders every bundled paper through the document parser and audits the
 /// result: no raw LaTeX may leak into prose runs, and every formula handed
 /// to RaTeX must compile (except the known-undefined citation keys).
 ///
