@@ -366,7 +366,7 @@ const frostlassCodeAuditSource = r'''
     % \and 
     % kayaba
 }
-\date{\today}
+\date{August 9, 2025}
 
 %===================== DOCUMENT START =====================%
 \begin{document}

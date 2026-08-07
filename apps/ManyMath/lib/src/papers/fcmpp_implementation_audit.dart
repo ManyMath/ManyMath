@@ -69,7 +69,7 @@ const fcmppImplementationAuditSource = r'''
 \title{FCMP++ CROSSWALK\\[4pt]\large Cryptographic Reference Organizing Source \& Specification:\\
 Working Audit Locator Key}
 \author{Joshua Babb}
-\date{Draft -- \today}
+\date{Draft -- May 27, 2026}
 
 \begin{document}
 \maketitle

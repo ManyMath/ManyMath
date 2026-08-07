@@ -9,7 +9,7 @@ const rageAuditSource = r'''
     \and
     Joshua Babb\thanks{Cypher Stack, implementation review}
 }
-\date{\today}
+\date{July 9, 2025}
 
 \begin{document}
 \maketitle
