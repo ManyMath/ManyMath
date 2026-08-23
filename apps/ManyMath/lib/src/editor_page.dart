@@ -15,6 +15,7 @@ import 'editor_toolbar.dart';
 import 'error_panel.dart';
 import 'formula_check.dart';
 import 'latex_document.dart';
+import 'preview_theme.dart';
 import 'templates.dart';
 import 'tex_files.dart';
 
@@ -91,6 +92,7 @@ class _EditorPageState extends State<EditorPage>
   String? _engineError;
   String? _saveError;
   double _previewZoom = 1;
+  PreviewTheme _previewTheme = PreviewTheme.light;
   bool _documentsMinimized = false;
   bool _sourceMinimized = false;
   bool _previewMinimized = false;
@@ -312,6 +314,10 @@ class _EditorPageState extends State<EditorPage>
 
   void _setZoom(double next) {
     setState(() => _previewZoom = next.clamp(0.7, 1.4));
+  }
+
+  void _cyclePreviewTheme() {
+    setState(() => _previewTheme = _previewTheme.next);
   }
 
   void _selectDocument(ManyMathDocument document) {
@@ -941,6 +947,8 @@ class _EditorPageState extends State<EditorPage>
       blocks: _blocks,
       macroPreamble: _macroPreamble,
       zoom: _previewZoom,
+      previewTheme: _previewTheme,
+      onCyclePreviewTheme: _cyclePreviewTheme,
       engineLoading: _engineLoading,
       engineError: _engineError,
       onRetry: _initializeEngine,
@@ -1153,6 +1161,8 @@ class _PreviewPane extends StatelessWidget {
     required this.blocks,
     required this.macroPreamble,
     required this.zoom,
+    required this.previewTheme,
+    required this.onCyclePreviewTheme,
     required this.engineLoading,
     required this.engineError,
     required this.onRetry,
@@ -1168,6 +1178,8 @@ class _PreviewPane extends StatelessWidget {
   final List<DocBlock> blocks;
   final String macroPreamble;
   final double zoom;
+  final PreviewTheme previewTheme;
+  final VoidCallback onCyclePreviewTheme;
   final bool engineLoading;
   final String? engineError;
   final VoidCallback onRetry;
@@ -1193,6 +1205,10 @@ class _PreviewPane extends StatelessWidget {
               title: 'Preview',
               subtitle: engineLoading ? 'Starting renderer' : 'PDF-style page',
               actions: <Widget>[
+                _PreviewThemeButton(
+                  theme: previewTheme,
+                  onPressed: onCyclePreviewTheme,
+                ),
                 _SymbolButton(
                   symbol: '−',
                   label: 'Zoom out',
@@ -1239,6 +1255,7 @@ class _PreviewPane extends StatelessWidget {
               blocks: blocks,
               macroPreamble: macroPreamble,
               zoom: zoom,
+              previewTheme: previewTheme,
               engineLoading: engineLoading,
               engineError: engineError,
               onRetry: onRetry,
@@ -1255,6 +1272,7 @@ class _PreviewContent extends StatefulWidget {
     required this.blocks,
     required this.macroPreamble,
     required this.zoom,
+    required this.previewTheme,
     required this.engineLoading,
     required this.engineError,
     required this.onRetry,
@@ -1263,6 +1281,7 @@ class _PreviewContent extends StatefulWidget {
   final List<DocBlock> blocks;
   final String macroPreamble;
   final double zoom;
+  final PreviewTheme previewTheme;
   final bool engineLoading;
   final String? engineError;
   final VoidCallback onRetry;
@@ -1286,6 +1305,7 @@ class _PreviewContentState extends State<_PreviewContent> {
     if (oldWidget.blocks != widget.blocks ||
         oldWidget.macroPreamble != widget.macroPreamble ||
         oldWidget.zoom != widget.zoom ||
+        oldWidget.previewTheme != widget.previewTheme ||
         oldWidget.engineLoading != widget.engineLoading ||
         oldWidget.engineError != widget.engineError) {
       _content = _buildContent(widget);
@@ -1323,6 +1343,7 @@ class _PreviewContentState extends State<_PreviewContent> {
         blocks: preview.blocks,
         macroPreamble: preview.macroPreamble,
         zoom: preview.zoom,
+        previewTheme: preview.previewTheme,
       ),
     );
   }
@@ -1353,6 +1374,51 @@ class _SymbolButton extends StatelessWidget {
         onPressed: onPressed,
         style: const MButtonStyleDelta(minHeight: 32, padding: EdgeInsets.zero),
         child: Text(symbol, style: const TextStyle(fontSize: 18, height: 1)),
+      ),
+    );
+  }
+}
+
+/// The preview-pane theme toggle: one unchanging moon glyph on a chip
+/// painted with the mode's own paper and ink, so the button face previews
+/// the mode (and a light icon never disappears on a light app header).
+/// The render itself changing makes the mode obvious; the semantics label
+/// still names it for screen readers.
+class _PreviewThemeButton extends StatelessWidget {
+  const _PreviewThemeButton({required this.theme, required this.onPressed});
+
+  final PreviewTheme theme;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = previewPalette(theme);
+    return SizedBox.square(
+      dimension: 32,
+      child: MButton(
+        semanticLabel:
+            'Preview theme: ${theme.label}. '
+            'Activate for ${theme.next.label}',
+        variant: MButtonVariant.ghost,
+        size: MButtonSize.xs,
+        onPressed: onPressed,
+        style: const MButtonStyleDelta(minHeight: 32, padding: EdgeInsets.zero),
+        child: Container(
+          width: 18,
+          height: 18,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: palette.paper,
+            border: Border.all(color: palette.frameBorder),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: MIcon(
+            MIconData.moon,
+            size: 12,
+            color: palette.ink,
+            excludeFromSemantics: true,
+          ),
+        ),
       ),
     );
   }

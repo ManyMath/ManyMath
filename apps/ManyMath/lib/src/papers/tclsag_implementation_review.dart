@@ -5,7 +5,7 @@ const tclsagImplementationReviewSource = r'''
 \usepackage{amsmath,amssymb,hyperref,xurl}
 \title{T-CLSAG Implementation Security Audit}
 \author{Joshua Babb\thanks{\url{Cypher Stack}}}
-\date{\today}
+\date{July 28, 2025}
 
 \begin{document}
 \maketitle

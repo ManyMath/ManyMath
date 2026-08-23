@@ -7,6 +7,7 @@ import 'package:manymath/src/document_view.dart';
 import 'package:manymath/src/editor_page.dart';
 import 'package:manymath/src/formula_check.dart';
 import 'package:manymath/src/latex_document.dart';
+import 'package:manymath/src/preview_theme.dart';
 import 'package:manyui/manyui.dart';
 
 void main() {
@@ -538,5 +539,46 @@ Content.
       ),
       findsNothing,
     );
+  });
+
+  PreviewTheme previewTheme(WidgetTester tester) =>
+      tester.widget<DocumentView>(find.byType(DocumentView)).previewTheme;
+
+  Future<void> tapPreviewThemeToggle(WidgetTester tester) async {
+    await tester.tap(find.bySemanticsLabel(RegExp('Preview theme:')));
+    await tester.pump();
+  }
+
+  testWidgets('preview theme toggle cycles four modes in order', (
+    tester,
+  ) async {
+    await pumpEditor(tester);
+    expect(previewTheme(tester), PreviewTheme.light);
+
+    await tapPreviewThemeToggle(tester);
+    expect(previewTheme(tester), PreviewTheme.dark);
+    await tapPreviewThemeToggle(tester);
+    expect(previewTheme(tester), PreviewTheme.terminal);
+    await tapPreviewThemeToggle(tester);
+    expect(previewTheme(tester), PreviewTheme.night);
+    await tapPreviewThemeToggle(tester);
+    expect(previewTheme(tester), PreviewTheme.light);
+  });
+
+  testWidgets('app theme toggle leaves the preview theme alone', (
+    tester,
+  ) async {
+    await pumpEditor(tester);
+
+    await tester.tap(find.bySemanticsLabel('Use dark theme'));
+    await tester.pump();
+    expect(previewTheme(tester), PreviewTheme.light);
+
+    await tapPreviewThemeToggle(tester);
+    expect(previewTheme(tester), PreviewTheme.dark);
+
+    await tester.tap(find.bySemanticsLabel('Use light theme'));
+    await tester.pump();
+    expect(previewTheme(tester), PreviewTheme.dark);
   });
 }

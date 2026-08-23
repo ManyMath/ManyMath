@@ -5,6 +5,7 @@ import 'package:manyui/manyui.dart';
 import 'package:ratex_flutter/ratex_flutter.dart';
 
 import 'latex_document.dart';
+import 'preview_theme.dart';
 import 'tikz_diagram.dart';
 
 class DocumentView extends StatelessWidget {
@@ -12,6 +13,7 @@ class DocumentView extends StatelessWidget {
     required this.blocks,
     this.macroPreamble = '',
     this.zoom = 1,
+    this.previewTheme = PreviewTheme.light,
     super.key,
   });
 
@@ -23,7 +25,11 @@ class DocumentView extends StatelessWidget {
   final String macroPreamble;
   final double zoom;
 
+  /// The preview pane's own color scheme, independent of the app theme.
+  final PreviewTheme previewTheme;
+
   double get _bodySize => 16 * zoom;
+  PreviewPalette get _palette => previewPalette(previewTheme);
 
   @override
   Widget build(BuildContext context) {
@@ -50,7 +56,7 @@ class DocumentView extends StatelessWidget {
               (constraints.maxWidth - 760) / 2,
             );
             final textStyle = TextStyle(
-              color: const Color(0xFF18201C),
+              color: _palette.ink,
               fontSize: _bodySize,
               height: 1.55,
               fontFamily: 'Latin Modern Roman',
@@ -72,9 +78,9 @@ class DocumentView extends StatelessWidget {
                   ),
                   sliver: DecoratedSliver(
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFFFFFF),
+                      color: _palette.paper,
                       borderRadius: BorderRadius.circular(3),
-                      border: Border.all(color: const Color(0xFFD9DEDB)),
+                      border: Border.all(color: _palette.border),
                       boxShadow: const <BoxShadow>[
                         BoxShadow(
                           color: Color(0x18000000),
@@ -89,10 +95,10 @@ class DocumentView extends StatelessWidget {
                           ? SliverToBoxAdapter(
                               child: DefaultTextStyle(
                                 style: textStyle,
-                                child: const Text(
+                                child: Text(
                                   'No rendered content',
                                   textAlign: TextAlign.center,
-                                  style: TextStyle(color: Color(0xFF64716B)),
+                                  style: TextStyle(color: _palette.dimText),
                                 ),
                               ),
                             )
@@ -124,7 +130,7 @@ class DocumentView extends StatelessWidget {
       macroPreamble + latex,
       fontSize: fontSize,
       displayMode: displayMode,
-      color: const Color(0xFF18201C),
+      color: _palette.ink,
       semanticLabel: 'Math formula: $latex',
       loadingBuilder: (_) => SizedBox(height: fontSize),
       errorBuilder: (_, error) => Text(
@@ -282,9 +288,9 @@ class DocumentView extends StatelessWidget {
             width: double.infinity,
             padding: EdgeInsets.all(12 * zoom),
             decoration: BoxDecoration(
-              color: const Color(0xFFF2F4F3),
+              color: _palette.panel,
               borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: const Color(0xFFD9DEDB)),
+              border: Border.all(color: _palette.border),
             ),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -342,7 +348,7 @@ class DocumentView extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             child: Table(
               defaultColumnWidth: const IntrinsicColumnWidth(),
-              border: TableBorder.all(color: const Color(0xFFD9DEDB)),
+              border: TableBorder.all(color: _palette.border),
               defaultVerticalAlignment: TableCellVerticalAlignment.middle,
               children: <TableRow>[
                 for (final row in block.rows)
@@ -405,7 +411,7 @@ class DocumentView extends StatelessWidget {
             width: double.infinity,
             padding: EdgeInsets.all(12 * zoom),
             decoration: BoxDecoration(
-              border: Border.all(color: const Color(0xFF8A948E)),
+              border: Border.all(color: _palette.frameBorder),
             ),
             child: _blockColumn(context, block.children),
           ),
@@ -452,9 +458,9 @@ class DocumentView extends StatelessWidget {
           padding: EdgeInsets.symmetric(vertical: 6 * zoom),
           child: Container(
             padding: EdgeInsets.only(left: 16 * zoom),
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               border: Border(
-                left: BorderSide(color: Color(0xFFD9DEDB), width: 3),
+                left: BorderSide(color: _palette.border, width: 3),
               ),
             ),
             child: _blockColumn(context, block.children),
@@ -520,9 +526,9 @@ class DocumentView extends StatelessWidget {
                   width: double.infinity,
                   padding: EdgeInsets.all(12 * zoom),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF7F5F0),
+                    color: _palette.panel,
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: const Color(0xFFE3DDCE)),
+                    border: Border.all(color: _palette.border),
                   ),
                   child: content,
                 ),
@@ -577,15 +583,15 @@ class DocumentView extends StatelessWidget {
         width: double.infinity,
         padding: EdgeInsets.all(16 * zoom),
         decoration: BoxDecoration(
-          color: const Color(0xFFF2F4F3),
+          color: _palette.panel,
           borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: const Color(0xFFD9DEDB)),
+          border: Border.all(color: _palette.border),
         ),
         child: Text(
           'Diagram ($kind) — not rendered',
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: const Color(0xFF64716B),
+            color: _palette.dimText,
             fontStyle: FontStyle.italic,
             fontSize: _bodySize * 0.9,
           ),
@@ -593,8 +599,6 @@ class DocumentView extends StatelessWidget {
       ),
     );
   }
-
-  static const _tikzInk = Color(0xFF18201C);
 
   /// One TikZ label (node or edge) as a single multi-line rich text: lines
   /// joined by `\n`, each line through the document's inline pipeline so
@@ -621,7 +625,7 @@ class DocumentView extends StatelessWidget {
         fontSize: fontSize,
         height: 1.3,
         fontFamily: monospace ? 'ui-monospace' : null,
-        color: _tikzInk,
+        color: _palette.ink,
       ),
     );
   }
@@ -822,7 +826,7 @@ class DocumentView extends StatelessWidget {
             child: CustomPaint(
               painter: _TikzEdgePainter(
                 edges: [for (final e in edges) e.shifted(shift)],
-                ink: _tikzInk,
+                ink: _palette.ink,
                 zoom: zoom,
               ),
             ),
@@ -833,9 +837,9 @@ class DocumentView extends StatelessWidget {
               child: Container(
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFFFFF),
+                  color: _palette.paper,
                   border: node.style.draw
-                      ? Border.all(color: _tikzInk, width: 1.1 * zoom)
+                      ? Border.all(color: _palette.ink, width: 1.1 * zoom)
                       : null,
                   borderRadius: node.style.roundedCorners
                       ? BorderRadius.circular(6 * zoom)
@@ -853,10 +857,11 @@ class DocumentView extends StatelessWidget {
               rect: label.rect.shift(shift),
               child: Container(
                 alignment: Alignment.center,
-                // TikZ edge labels conventionally get a white halo
-                // (fill=white) so they stay legible where they cross the
-                // line — e.g. an [above] label on a vertical edge.
-                color: const Color(0xE6FFFFFF),
+                // TikZ edge labels conventionally get a halo (fill=white in
+                // light mode, matching the paper) so they stay legible where
+                // they cross the line — e.g. an [above] label on a vertical
+                // edge.
+                color: _palette.labelHalo,
                 child: Text.rich(
                   label.span,
                   textAlign: TextAlign.center,
