@@ -8,6 +8,7 @@ import 'package:manymath/src/editor_page.dart';
 import 'package:manymath/src/formula_check.dart';
 import 'package:manymath/src/latex_document.dart';
 import 'package:manymath/src/preview_theme.dart';
+import 'package:manymath/src/theme.dart';
 import 'package:manyui/manyui.dart';
 
 void main() {
@@ -49,7 +50,7 @@ void main() {
         store: documentStore,
         engineInitializer: engineInitializer ?? () async {},
         formulaChecker: formulaChecker ?? (_) => const <FormulaIssue>[],
-        initialThemeMode: MThemeMode.light,
+        initialThemeMode: AppThemeMode.light,
         persistentStorage: persistentStorage,
       ),
     );
@@ -424,6 +425,10 @@ Content.
     await tester.tap(find.bySemanticsLabel('Use dark theme'));
     await tester.pump();
 
+    expect(find.bySemanticsLabel('Use night theme'), findsOneWidget);
+    await tester.tap(find.bySemanticsLabel('Use night theme'));
+    await tester.pump();
+
     expect(find.bySemanticsLabel('Use light theme'), findsOneWidget);
   });
 
@@ -570,15 +575,44 @@ Content.
   ) async {
     await pumpEditor(tester);
 
-    await tester.tap(find.bySemanticsLabel('Use dark theme'));
-    await tester.pump();
-    expect(previewTheme(tester), PreviewTheme.light);
+    for (final label in <String>[
+      'Use dark theme',
+      'Use night theme',
+      'Use light theme',
+    ]) {
+      await tester.tap(find.bySemanticsLabel(label));
+      await tester.pump();
+      expect(previewTheme(tester), PreviewTheme.light);
+    }
 
     await tapPreviewThemeToggle(tester);
     expect(previewTheme(tester), PreviewTheme.dark);
 
-    await tester.tap(find.bySemanticsLabel('Use light theme'));
+    await tester.tap(find.bySemanticsLabel('Use dark theme'));
     await tester.pump();
     expect(previewTheme(tester), PreviewTheme.dark);
+  });
+
+  testWidgets('app theme toggle cycles light, dark, and night', (tester) async {
+    await pumpEditor(tester);
+    MWidgetsApp app() => tester.widget<MWidgetsApp>(find.byType(MWidgetsApp));
+
+    Future<void> tap(String label) async {
+      await tester.tap(find.bySemanticsLabel(label));
+      await tester.pump();
+    }
+
+    expect(app().themeMode, MThemeMode.light);
+
+    await tap('Use dark theme');
+    expect(app().themeMode, MThemeMode.dark);
+
+    await tap('Use night theme');
+    expect(app().themeMode, MThemeMode.light);
+    expect(app().theme?.colors.foreground, manyMathNightRed);
+
+    await tap('Use light theme');
+    expect(app().themeMode, MThemeMode.light);
+    expect(app().theme?.colors.foreground, isNot(manyMathNightRed));
   });
 }

@@ -22,7 +22,7 @@ class ManyMathApp extends StatefulWidget {
   final DocumentStore store;
   final Future<void> Function()? engineInitializer;
   final List<FormulaIssue> Function(List<DocBlock>)? formulaChecker;
-  final MThemeMode? initialThemeMode;
+  final AppThemeMode? initialThemeMode;
   final bool persistentStorage;
 
   @override
@@ -30,8 +30,8 @@ class ManyMathApp extends StatefulWidget {
 }
 
 class _ManyMathAppState extends State<ManyMathApp> with WidgetsBindingObserver {
-  late MThemeMode _themeMode =
-      widget.initialThemeMode ?? widget.store.themeMode;
+  late AppThemeMode _themeMode =
+      widget.initialThemeMode ?? widget.store.appThemeMode;
 
   @override
   void initState() {
@@ -56,9 +56,9 @@ class _ManyMathAppState extends State<ManyMathApp> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  void _toggleTheme(bool currentlyDark) {
-    final next = currentlyDark ? MThemeMode.light : MThemeMode.dark;
-    widget.store.themeMode = next;
+  void _cycleTheme() {
+    final next = _themeMode.next;
+    widget.store.appThemeMode = next;
     setState(() {
       _themeMode = next;
     });
@@ -69,9 +69,17 @@ class _ManyMathAppState extends State<ManyMathApp> with WidgetsBindingObserver {
     return MWidgetsApp(
       title: 'ManyMath Editor',
       color: manyMathGreen,
-      theme: manyMathLightTheme(),
+      theme: _themeMode == AppThemeMode.night
+          ? manyMathNightTheme()
+          : manyMathLightTheme(),
       darkTheme: manyMathDarkTheme(),
-      themeMode: _themeMode,
+      // manyui's MThemeMode has no night value, so night mode rides the
+      // light slot, which holds the night theme above.
+      themeMode: switch (_themeMode) {
+        AppThemeMode.system => MThemeMode.system,
+        AppThemeMode.dark => MThemeMode.dark,
+        AppThemeMode.light || AppThemeMode.night => MThemeMode.light,
+      },
       debugShowCheckedModeBanner: false,
       home: EditorPage(
         store: widget.store,
@@ -79,7 +87,7 @@ class _ManyMathAppState extends State<ManyMathApp> with WidgetsBindingObserver {
         formulaChecker: widget.formulaChecker,
         persistentStorage: widget.persistentStorage,
         themeMode: _themeMode,
-        onToggleTheme: _toggleTheme,
+        onCycleTheme: _cycleTheme,
       ),
     );
   }

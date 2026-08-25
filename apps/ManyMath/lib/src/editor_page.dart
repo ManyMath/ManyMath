@@ -18,6 +18,7 @@ import 'latex_document.dart';
 import 'preview_theme.dart';
 import 'templates.dart';
 import 'tex_files.dart';
+import 'theme.dart';
 
 const double editorCompactBreakpoint = 780;
 const double documentBrowserBreakpoint = 1100;
@@ -44,7 +45,7 @@ class EditorPage extends StatefulWidget {
   const EditorPage({
     required this.store,
     required this.themeMode,
-    required this.onToggleTheme,
+    required this.onCycleTheme,
     this.engineInitializer,
     this.formulaChecker,
     this.persistentStorage = true,
@@ -52,8 +53,8 @@ class EditorPage extends StatefulWidget {
   });
 
   final DocumentStore store;
-  final MThemeMode themeMode;
-  final ValueChanged<bool> onToggleTheme;
+  final AppThemeMode themeMode;
+  final VoidCallback onCycleTheme;
   final Future<void> Function()? engineInitializer;
   final List<FormulaIssue> Function(List<DocBlock>)? formulaChecker;
   final bool persistentStorage;
@@ -581,9 +582,18 @@ class _EditorPageState extends State<EditorPage>
   Widget build(BuildContext context) {
     final platformDark =
         MediaQuery.platformBrightnessOf(context) == Brightness.dark;
-    final currentlyDark =
-        widget.themeMode == MThemeMode.dark ||
-        (widget.themeMode == MThemeMode.system && platformDark);
+    final effectiveTheme = widget.themeMode == AppThemeMode.system
+        ? (platformDark ? AppThemeMode.dark : AppThemeMode.light)
+        : widget.themeMode;
+    final (themeIcon, themeIconColor, themeLabel) = switch (effectiveTheme) {
+      AppThemeMode.light => (MIconData.sun, null, 'Use dark theme'),
+      AppThemeMode.dark => (
+        MIconData.moon,
+        manyMathGreenDark,
+        'Use night theme',
+      ),
+      _ => (MIconData.moon, manyMathNightRed, 'Use light theme'),
+    };
 
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
@@ -689,11 +699,11 @@ class _EditorPageState extends State<EditorPage>
                 onCopy: _copySource,
                 onAbout: _showAbout,
               ),
-              MIconButton(
-                icon: currentlyDark ? MIconData.sun : MIconData.moon,
-                label: currentlyDark ? 'Use light theme' : 'Use dark theme',
-                size: MButtonSize.sm,
-                onPressed: () => widget.onToggleTheme(currentlyDark),
+              _AppThemeButton(
+                icon: themeIcon,
+                color: themeIconColor,
+                label: themeLabel,
+                onPressed: widget.onCycleTheme,
               ),
             ],
           ),
@@ -1374,6 +1384,39 @@ class _SymbolButton extends StatelessWidget {
         onPressed: onPressed,
         style: const MButtonStyleDelta(minHeight: 32, padding: EdgeInsets.zero),
         child: Text(symbol, style: const TextStyle(fontSize: 18, height: 1)),
+      ),
+    );
+  }
+}
+
+/// The app-wide theme toggle in the header. Same ghost chrome as the other
+/// header icon buttons, but with the tint set on MIcon directly: MButton
+/// forces its own IconTheme color, so MIconButton can't show the red glyph
+/// that advertises night mode.
+class _AppThemeButton extends StatelessWidget {
+  const _AppThemeButton({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final MIconData icon;
+  final Color? color;
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: 32,
+      child: MButton(
+        semanticLabel: label,
+        variant: MButtonVariant.ghost,
+        size: MButtonSize.xs,
+        onPressed: onPressed,
+        style: const MButtonStyleDelta(minHeight: 32, padding: EdgeInsets.zero),
+        child: MIcon(icon, size: 16, color: color, excludeFromSemantics: true),
       ),
     );
   }

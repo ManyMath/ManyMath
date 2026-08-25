@@ -5,6 +5,7 @@ import 'package:manyui/manyui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'papers.dart';
+import 'theme.dart';
 
 @immutable
 class ManyMathDocument {
@@ -136,6 +137,7 @@ class DocumentStore extends ChangeNotifier {
   static const _lastOpenKey = 'manymath.settings.lastOpen';
   static const _splitKey = 'manymath.settings.split';
   static const _themeModeKey = 'manymath.settings.themeMode';
+  static const _appThemeKey = 'manymath.settings.appTheme';
 
   final _DocumentPreferences _preferences;
   final List<ManyMathDocument> _documents;
@@ -358,6 +360,25 @@ class DocumentStore extends ChangeNotifier {
     );
   }
 
+  /// The app-wide scheme the header toggle scrolls through. Falls back to
+  /// the legacy [themeMode] key for stores saved before night mode existed.
+  AppThemeMode get appThemeMode {
+    final saved = _preferences.getString(_appThemeKey);
+    return AppThemeMode.values.asNameMap()[saved] ??
+        switch (themeMode) {
+          MThemeMode.light => AppThemeMode.light,
+          MThemeMode.dark => AppThemeMode.dark,
+          MThemeMode.system => AppThemeMode.system,
+        };
+  }
+
+  set appThemeMode(AppThemeMode mode) {
+    _enqueue(
+      'save app theme mode',
+      () => _preferences.setString(_appThemeKey, mode.name),
+    );
+  }
+
   ManyMathDocument create({required String name, required String source}) {
     _checkOpen();
     final timestamp = _now();
@@ -409,9 +430,14 @@ class DocumentStore extends ChangeNotifier {
 
   void _persistRemovedSeed(String key) {
     _enqueue('record removed seed', () async {
-      final current = _decodeRemovedSeeds(_preferences.getString(removedSeedsStorageKey));
+      final current = _decodeRemovedSeeds(
+        _preferences.getString(removedSeedsStorageKey),
+      );
       current.add(key);
-      return _preferences.setString(removedSeedsStorageKey, jsonEncode(current.toList()));
+      return _preferences.setString(
+        removedSeedsStorageKey,
+        jsonEncode(current.toList()),
+      );
     });
   }
 

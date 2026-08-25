@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manymath/src/document_store.dart';
 import 'package:manymath/src/papers.dart';
+import 'package:manymath/src/theme.dart';
 import 'package:manyui/manyui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -182,5 +183,20 @@ void main() {
     expect(reloaded.splitRatio, 0.85);
     expect(reloaded.themeMode, MThemeMode.dark);
     expect(reloaded.lastOpenedId, copy.id);
+  });
+
+  test('app theme mode persists and falls back to the legacy key', () async {
+    final store = await DocumentStore.load();
+    expect(store.appThemeMode, AppThemeMode.system);
+
+    store.themeMode = MThemeMode.dark;
+    await store.flush();
+    expect(store.appThemeMode, AppThemeMode.dark);
+
+    store.appThemeMode = AppThemeMode.night;
+    await store.close();
+
+    final reloaded = await DocumentStore.load();
+    expect(reloaded.appThemeMode, AppThemeMode.night);
   });
 }
