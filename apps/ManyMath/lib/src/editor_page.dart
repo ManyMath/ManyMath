@@ -225,7 +225,9 @@ class _EditorPageState extends State<EditorPage>
   void _setAutoRender(bool enabled) {
     setState(() => _autoRender = enabled);
     if (enabled && _changesPending) {
-      _scheduleAutoRender();
+      // Toggling on is a deliberate action: render pending changes right
+      // away rather than after the typing debounce.
+      unawaited(_render());
     } else if (!enabled) {
       _autoRenderTimer?.cancel();
       _autoRenderTimer = null;
@@ -661,34 +663,30 @@ class _EditorPageState extends State<EditorPage>
                 onPressed: _showDocuments,
               ),
               MButton(
-                semanticLabel: 'Render preview',
-                onPressed: _engineReady && !_autoRender
-                    ? _renderManually
-                    : null,
+                semanticLabel: _autoRender
+                    ? 'Auto render: on. Activate to turn off'
+                    : 'Auto render: off. Activate to turn on',
+                variant: _autoRender
+                    ? MButtonVariant.secondary
+                    : MButtonVariant.outline,
                 size: MButtonSize.sm,
-                child: const Row(
+                onPressed: _engineReady
+                    ? () => _setAutoRender(!_autoRender)
+                    : null,
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    MIcon(MIconData.play, size: 15, excludeFromSemantics: true),
-                    SizedBox(width: 7),
-                    Text('Render'),
+                    MIcon(
+                      _autoRender ? MIconData.check : MIconData.play,
+                      size: 15,
+                      excludeFromSemantics: true,
+                    ),
+                    if (MediaQuery.sizeOf(context).width >= 900) ...<Widget>[
+                      const SizedBox(width: 7),
+                      const Text('Auto render'),
+                    ],
                   ],
                 ),
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  MSwitch(
-                    initialValue: _autoRender,
-                    enabled: _engineReady,
-                    semanticLabel: 'Auto render',
-                    onChanged: _setAutoRender,
-                  ),
-                  if (MediaQuery.sizeOf(context).width >= 900) ...<Widget>[
-                    const SizedBox(width: 6),
-                    const Text('Auto render'),
-                  ],
-                ],
               ),
               _FileMenu(
                 onCreate: _createDocument,

@@ -334,7 +334,7 @@ Content.
     expect(find.textContaining('21 characters'), findsOneWidget);
     expect(find.text('Original document'), findsOneWidget);
 
-    await tester.tap(find.text('Render'));
+    await tester.tap(find.text('Auto render'));
     await settleRender(tester);
 
     expect(find.text('Rendered'), findsOneWidget);
@@ -342,7 +342,7 @@ Content.
     expect(find.text('Original document'), findsNothing);
   });
 
-  testWidgets('auto render updates the preview and disables manual render', (
+  testWidgets('the auto render button toggles automatic rendering on and off', (
     tester,
   ) async {
     var formulaChecks = 0;
@@ -356,15 +356,16 @@ Content.
     );
     expect(formulaChecks, 1);
 
-    final renderButton = find.byWidgetPredicate(
-      (widget) => widget is MButton && widget.semanticLabel == 'Render preview',
+    final toggle = find.byWidgetPredicate(
+      (widget) =>
+          widget is MButton &&
+          (widget.semanticLabel ?? '').startsWith('Auto render:'),
     );
-    expect(tester.widget<MButton>(renderButton).onPressed, isNotNull);
+    expect(tester.widget<MButton>(toggle).semanticLabel, contains('off'));
 
-    await tester.tap(find.bySemanticsLabel('Auto render'));
+    await tester.tap(find.text('Auto render'));
     await tester.pump();
-
-    expect(tester.widget<MButton>(renderButton).onPressed, isNull);
+    expect(tester.widget<MButton>(toggle).semanticLabel, contains('on'));
 
     await tester.enterText(
       find.bySemanticsLabel('LaTeX source editor'),
@@ -390,6 +391,17 @@ Content.
     expect(find.text('Changes pending'), findsNothing);
     expect(find.text('Rendered automatically'), findsNWidgets(2));
     expect(formulaChecks, 1);
+
+    await tester.tap(find.text('Auto render'));
+    await tester.pump();
+    expect(tester.widget<MButton>(toggle).semanticLabel, contains('off'));
+
+    await tester.enterText(
+      find.bySemanticsLabel('LaTeX source editor'),
+      'Never rendered draft',
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Changes pending'), findsOneWidget);
   });
 
   testWidgets('renderer failure offers a working retry', (tester) async {
