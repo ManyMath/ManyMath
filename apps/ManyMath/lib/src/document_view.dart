@@ -55,10 +55,18 @@ class DocumentView extends StatelessWidget {
             final canvasPadding = compact
                 ? const EdgeInsets.symmetric(horizontal: 12, vertical: 20)
                 : const EdgeInsets.symmetric(horizontal: 24, vertical: 30);
-            final paperPadding = compact ? 24.0 : 48.0;
+            // Zoom is a page-level zoom, like a PDF viewer's: the page
+            // itself (margins included) scales, and once it outgrows the
+            // viewport the canvas scrolls horizontally.
+            final paperPadding = (compact ? 24.0 : 48.0) * zoom;
+            final pageWidth = 760 * zoom;
+            final contentWidth = math.max(
+              constraints.maxWidth,
+              pageWidth + 2 * canvasPadding.left,
+            );
             final centeredHorizontalPadding = math.max(
               canvasPadding.left,
-              (constraints.maxWidth - 760) / 2,
+              (contentWidth - pageWidth) / 2,
             );
             final textStyle = TextStyle(
               color: _palette.ink,
@@ -72,52 +80,62 @@ class DocumentView extends StatelessWidget {
                 'serif',
               ],
             );
-            return CustomScrollView(
-              slivers: <Widget>[
-                SliverPadding(
-                  padding: EdgeInsets.fromLTRB(
-                    centeredHorizontalPadding,
-                    canvasPadding.top,
-                    centeredHorizontalPadding,
-                    canvasPadding.bottom,
-                  ),
-                  sliver: DecoratedSliver(
-                    decoration: BoxDecoration(
-                      color: _palette.paper,
-                      borderRadius: BorderRadius.circular(3),
-                      border: Border.all(color: _palette.border),
-                      boxShadow: const <BoxShadow>[
-                        BoxShadow(
-                          color: Color(0x18000000),
-                          blurRadius: 14,
-                          offset: Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    sliver: SliverPadding(
-                      padding: EdgeInsets.all(paperPadding),
-                      sliver: blocks.isEmpty
-                          ? SliverToBoxAdapter(
-                              child: DefaultTextStyle(
-                                style: textStyle,
-                                child: Text(
-                                  'No rendered content',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(color: _palette.dimText),
-                                ),
-                              ),
-                            )
-                          : SliverList.builder(
-                              itemCount: blocks.length,
-                              itemBuilder: (context, index) => DefaultTextStyle(
-                                style: textStyle,
-                                child: _buildBlock(context, blocks[index]),
-                              ),
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: contentWidth,
+                child: CustomScrollView(
+                  slivers: <Widget>[
+                    SliverPadding(
+                      padding: EdgeInsets.fromLTRB(
+                        centeredHorizontalPadding,
+                        canvasPadding.top,
+                        centeredHorizontalPadding,
+                        canvasPadding.bottom,
+                      ),
+                      sliver: DecoratedSliver(
+                        decoration: BoxDecoration(
+                          color: _palette.paper,
+                          borderRadius: BorderRadius.circular(3),
+                          border: Border.all(color: _palette.border),
+                          boxShadow: const <BoxShadow>[
+                            BoxShadow(
+                              color: Color(0x18000000),
+                              blurRadius: 14,
+                              offset: Offset(0, 4),
                             ),
+                          ],
+                        ),
+                        sliver: SliverPadding(
+                          padding: EdgeInsets.all(paperPadding),
+                          sliver: blocks.isEmpty
+                              ? SliverToBoxAdapter(
+                                  child: DefaultTextStyle(
+                                    style: textStyle,
+                                    child: Text(
+                                      'No rendered content',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(color: _palette.dimText),
+                                    ),
+                                  ),
+                                )
+                              : SliverList.builder(
+                                  itemCount: blocks.length,
+                                  itemBuilder: (context, index) =>
+                                      DefaultTextStyle(
+                                        style: textStyle,
+                                        child: _buildBlock(
+                                          context,
+                                          blocks[index],
+                                        ),
+                                      ),
+                                ),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              ],
+              ),
             );
           },
         ),
