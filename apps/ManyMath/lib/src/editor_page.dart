@@ -23,6 +23,26 @@ import 'theme.dart';
 
 const double editorCompactBreakpoint = 780;
 const double documentBrowserBreakpoint = 1100;
+
+/// Choices for the source pane's font dropdown. The default,
+/// ui-monospace, is the code-optimized system face where available.
+const List<String> sourceFontFamilies = <String>[
+  'ui-monospace',
+  'monospace',
+  'Menlo',
+  'Consolas',
+  'Courier New',
+];
+
+/// Choices for the preview pane's font dropdown.
+const List<String> previewFontFamilies = <String>[
+  'Latin Modern Roman',
+  'Georgia',
+  'Times New Roman',
+  'Noto Serif',
+  'sans-serif',
+  'monospace',
+];
 const Duration autoRenderDelay = Duration(milliseconds: 350);
 
 typedef _ParsedDocument = ({
@@ -95,6 +115,8 @@ class _EditorPageState extends State<EditorPage>
   String? _saveError;
   double _previewZoom = 1;
   PreviewTheme _previewTheme = PreviewTheme.light;
+  String _sourceFontFamily = sourceFontFamilies.first;
+  String _previewFontFamily = previewFontFamilies.first;
   bool _documentsMinimized = false;
   bool _sourceMinimized = false;
   bool _previewMinimized = false;
@@ -883,6 +905,23 @@ class _EditorPageState extends State<EditorPage>
             title: 'Source',
             subtitle: texFileName(_document.name),
             actions: <Widget>[
+              SizedBox(
+                width: 150,
+                child: MSelect<String>(
+                  semanticLabel: 'Source font',
+                  initialValue: _sourceFontFamily,
+                  style: const MSelectStyleDelta(minHeight: 32),
+                  items: <MSelectItem<String>>[
+                    for (final family in sourceFontFamilies)
+                      MSelectItem(value: family, label: family),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() => _sourceFontFamily = value);
+                    }
+                  },
+                ),
+              ),
               MIconButton(
                 icon: MIconData.chevronLeft,
                 label: 'Minimize source',
@@ -918,6 +957,13 @@ class _EditorPageState extends State<EditorPage>
                         focusNode: _sourceFocus,
                         style: theme.typography.code.copyWith(
                           color: theme.colors.foreground,
+                          fontFamily: _sourceFontFamily,
+                          fontFamilyFallback: const <String>[
+                            'ui-monospace',
+                            'Menlo',
+                            'Consolas',
+                            'monospace',
+                          ],
                           fontSize: 13.5,
                           height: 1.55,
                         ),
@@ -958,6 +1004,9 @@ class _EditorPageState extends State<EditorPage>
       zoom: _previewZoom,
       previewTheme: _previewTheme,
       onCyclePreviewTheme: _cyclePreviewTheme,
+      previewFont: _previewFontFamily,
+      onPreviewFontChanged: (value) =>
+          setState(() => _previewFontFamily = value),
       engineLoading: _engineLoading,
       engineError: _engineError,
       onRetry: _initializeEngine,
@@ -1167,6 +1216,8 @@ class _PreviewPane extends StatelessWidget {
     required this.zoom,
     required this.previewTheme,
     required this.onCyclePreviewTheme,
+    required this.previewFont,
+    required this.onPreviewFontChanged,
     required this.engineLoading,
     required this.engineError,
     required this.onRetry,
@@ -1184,6 +1235,8 @@ class _PreviewPane extends StatelessWidget {
   final double zoom;
   final PreviewTheme previewTheme;
   final VoidCallback onCyclePreviewTheme;
+  final String previewFont;
+  final ValueChanged<String> onPreviewFontChanged;
   final bool engineLoading;
   final String? engineError;
   final VoidCallback onRetry;
@@ -1209,6 +1262,10 @@ class _PreviewPane extends StatelessWidget {
               title: 'Preview',
               subtitle: engineLoading ? 'Starting renderer' : 'PDF-style page',
               actions: <Widget>[
+                _PreviewFontMenu(
+                  previewFont: previewFont,
+                  onChanged: onPreviewFontChanged,
+                ),
                 _PreviewThemeButton(
                   theme: previewTheme,
                   onPressed: onCyclePreviewTheme,
@@ -1260,6 +1317,7 @@ class _PreviewPane extends StatelessWidget {
               macroPreamble: macroPreamble,
               zoom: zoom,
               previewTheme: previewTheme,
+              previewFont: previewFont,
               engineLoading: engineLoading,
               engineError: engineError,
               onRetry: onRetry,
@@ -1277,6 +1335,7 @@ class _PreviewContent extends StatefulWidget {
     required this.macroPreamble,
     required this.zoom,
     required this.previewTheme,
+    required this.previewFont,
     required this.engineLoading,
     required this.engineError,
     required this.onRetry,
@@ -1286,6 +1345,7 @@ class _PreviewContent extends StatefulWidget {
   final String macroPreamble;
   final double zoom;
   final PreviewTheme previewTheme;
+  final String previewFont;
   final bool engineLoading;
   final String? engineError;
   final VoidCallback onRetry;
@@ -1310,6 +1370,7 @@ class _PreviewContentState extends State<_PreviewContent> {
         oldWidget.macroPreamble != widget.macroPreamble ||
         oldWidget.zoom != widget.zoom ||
         oldWidget.previewTheme != widget.previewTheme ||
+        oldWidget.previewFont != widget.previewFont ||
         oldWidget.engineLoading != widget.engineLoading ||
         oldWidget.engineError != widget.engineError) {
       _content = _buildContent(widget);
@@ -1348,6 +1409,7 @@ class _PreviewContentState extends State<_PreviewContent> {
         macroPreamble: preview.macroPreamble,
         zoom: preview.zoom,
         previewTheme: preview.previewTheme,
+        fontFamily: preview.previewFont,
       ),
     );
   }
@@ -1378,6 +1440,78 @@ class _SymbolButton extends StatelessWidget {
         onPressed: onPressed,
         style: const MButtonStyleDelta(minHeight: 32, padding: EdgeInsets.zero),
         child: Text(symbol, style: const TextStyle(fontSize: 18, height: 1)),
+      ),
+    );
+  }
+}
+
+/// The preview pane's font dropdown, collapsed to a compact button so the
+/// crowded header (theme, zoom, maximize) fits narrow layouts; the source
+/// pane has room for a full MSelect instead. Opens the same style of menu
+/// as the file menu, with a check on the active family.
+class _PreviewFontMenu extends StatefulWidget {
+  const _PreviewFontMenu({required this.previewFont, required this.onChanged});
+
+  final String previewFont;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_PreviewFontMenu> createState() => _PreviewFontMenuState();
+}
+
+class _PreviewFontMenuState extends State<_PreviewFontMenu> {
+  final MPopoverController _menu = MPopoverController();
+
+  @override
+  void dispose() {
+    _menu.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MPopover(
+      controller: _menu,
+      semanticLabel: 'Preview font',
+      popoverBuilder: (context, close) => SizedBox(
+        width: 180,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            for (final family in previewFontFamilies)
+              MListTile(
+                leading: family == widget.previewFont
+                    ? const MIcon(
+                        MIconData.check,
+                        size: 15,
+                        excludeFromSemantics: true,
+                      )
+                    : const SizedBox(width: 15),
+                title: Text(family),
+                onTap: () {
+                  close();
+                  widget.onChanged(family);
+                },
+              ),
+          ],
+        ),
+      ),
+      child: SizedBox.square(
+        dimension: 32,
+        child: MButton(
+          semanticLabel: 'Preview font: ${widget.previewFont}',
+          variant: MButtonVariant.ghost,
+          size: MButtonSize.xs,
+          onPressed: _menu.toggle,
+          style: const MButtonStyleDelta(
+            minHeight: 32,
+            padding: EdgeInsets.zero,
+          ),
+          child: const Text(
+            'Aa',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+          ),
+        ),
       ),
     );
   }

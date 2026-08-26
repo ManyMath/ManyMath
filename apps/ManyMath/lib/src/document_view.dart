@@ -14,6 +14,7 @@ class DocumentView extends StatelessWidget {
     this.macroPreamble = '',
     this.zoom = 1,
     this.previewTheme = PreviewTheme.light,
+    this.fontFamily = 'Latin Modern Roman',
     super.key,
   });
 
@@ -27,6 +28,10 @@ class DocumentView extends StatelessWidget {
 
   /// The preview pane's own color scheme, independent of the app theme.
   final PreviewTheme previewTheme;
+
+  /// The prose face, chosen by the preview pane's font dropdown. Math
+  /// keeps its KaTeX fonts regardless.
+  final String fontFamily;
 
   double get _bodySize => 16 * zoom;
   PreviewPalette get _palette => previewPalette(previewTheme);
@@ -59,7 +64,7 @@ class DocumentView extends StatelessWidget {
               color: _palette.ink,
               fontSize: _bodySize,
               height: 1.55,
-              fontFamily: 'Latin Modern Roman',
+              fontFamily: fontFamily,
               fontFamilyFallback: const <String>[
                 'Georgia',
                 'Times New Roman',

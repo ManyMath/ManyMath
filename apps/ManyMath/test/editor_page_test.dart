@@ -646,4 +646,32 @@ Content.
     expect(app().themeMode, MThemeMode.light);
     expect(app().theme?.colors.foreground, isNot(manyMathNightRed));
   });
+
+  testWidgets('source and preview fonts change independently', (tester) async {
+    await pumpEditor(tester);
+
+    DocumentView documentView() =>
+        tester.widget<DocumentView>(find.byType(DocumentView));
+    EditableText editor() =>
+        tester.widget<EditableText>(find.byType(EditableText));
+
+    expect(documentView().fontFamily, 'Latin Modern Roman');
+    expect(editor().style.fontFamily, 'ui-monospace');
+
+    await tester.tap(find.bySemanticsLabel(RegExp('Preview font:')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Georgia'));
+    await tester.pumpAndSettle();
+
+    expect(documentView().fontFamily, 'Georgia');
+    expect(editor().style.fontFamily, 'ui-monospace');
+
+    await tester.tap(find.byType(MSelect<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Menlo').last);
+    await tester.pumpAndSettle();
+
+    expect(editor().style.fontFamily, 'Menlo');
+    expect(documentView().fontFamily, 'Georgia');
+  });
 }
