@@ -60,6 +60,25 @@ void main() {
     return documentStore;
   }
 
+  testWidgets('file menu button shows a document glyph with an ellipsis', (
+    tester,
+  ) async {
+    await pumpEditor(tester);
+
+    final button = find.byWidgetPredicate(
+      (widget) => widget is MButton && widget.semanticLabel == 'More actions',
+    );
+    expect(button, findsOneWidget);
+    expect(
+      find.descendant(of: button, matching: find.byType(MIcon)),
+      findsNWidgets(2),
+    );
+
+    await tester.tap(button);
+    await tester.pump();
+    expect(find.text('New document'), findsOneWidget);
+  });
+
   testWidgets('desktop workspace presents resizable source and preview panes', (
     tester,
   ) async {

@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:manyui/manyui.dart';
 
 import 'document_store.dart';
+import 'file_actions_button.dart';
 
 enum DocumentAction { rename, duplicate, delete }
 
@@ -177,10 +178,8 @@ class _DocumentActionsState extends State<_DocumentActions> {
           ],
         ),
       ),
-      child: MIconButton(
-        icon: MIconData.moreHorizontal,
+      child: FileActionsButton(
         label: 'Actions for ${widget.documentName}',
-        size: MButtonSize.xs,
         onPressed: _menu.toggle,
       ),
     );

@@ -13,6 +13,7 @@ import 'document_store.dart';
 import 'document_view.dart';
 import 'editor_toolbar.dart';
 import 'error_panel.dart';
+import 'file_actions_button.dart';
 import 'formula_check.dart';
 import 'latex_document.dart';
 import 'preview_theme.dart';
@@ -1049,12 +1050,7 @@ class _FileMenuState extends State<_FileMenu> {
           ],
         ),
       ),
-      child: MIconButton(
-        icon: MIconData.moreHorizontal,
-        label: 'More actions',
-        size: MButtonSize.sm,
-        onPressed: _menu.toggle,
-      ),
+      child: FileActionsButton(label: 'More actions', onPressed: _menu.toggle),
     );
   }
 
