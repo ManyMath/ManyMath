@@ -35,9 +35,13 @@ with socket.socket() as server:
 required_files=(
   index.html
   404.html
-  styles.css
-  assets/manymath-mark.svg
-  assets/editor-preview.png
+  assets/site.css
+  assets/brand/marks/manymath.svg
+  assets/brand/og.png
+  assets/hero-theme-light.png
+  assets/hero-theme-dark.png
+  assets/hero-theme-terminal.png
+  assets/hero-theme-night.png
   edit/index.html
   edit/flutter_bootstrap.js
   edit/main.dart.js
@@ -100,11 +104,11 @@ fi
 
 curl --fail --silent --show-error "http://127.0.0.1:$port/edit/" \
   --output "$download_dir/editor.html"
-curl --fail --silent --show-error "http://127.0.0.1:$port/styles.css" \
+curl --fail --silent --show-error "http://127.0.0.1:$port/assets/site.css" \
   --output "$download_dir/styles.css"
-curl --fail --silent --show-error "http://127.0.0.1:$port/assets/manymath-mark.svg" \
+curl --fail --silent --show-error "http://127.0.0.1:$port/assets/brand/marks/manymath.svg" \
   --output "$download_dir/manymath-mark.svg"
-curl --fail --silent --show-error "http://127.0.0.1:$port/assets/editor-preview.png" \
+curl --fail --silent --show-error "http://127.0.0.1:$port/assets/hero-theme-light.png" \
   --output "$download_dir/editor-preview.png"
 curl --fail --silent --show-error "http://127.0.0.1:$port/edit/main.dart.js" \
   --output "$download_dir/main.dart.js"
@@ -115,16 +119,16 @@ curl --fail --silent --show-error \
 
 grep -Fq '<base href="/edit/">' "$download_dir/editor.html"
 if grep -Eiq '<!doctype html|<html' "$download_dir/styles.css"; then
-  echo "/styles.css returned HTML" >&2
+  echo "/assets/site.css returned HTML" >&2
   exit 1
 fi
 if ! grep -Fq '<svg' "$download_dir/manymath-mark.svg"; then
-  echo "/assets/manymath-mark.svg is not an SVG image" >&2
+  echo "/assets/brand/marks/manymath.svg is not an SVG image" >&2
   exit 1
 fi
 preview_magic="$(od -An -tx1 -N8 "$download_dir/editor-preview.png" | tr -d '[:space:]')"
 if [[ "$preview_magic" != "89504e470d0a1a0a" ]]; then
-  echo "served editor-preview.png is not a valid PNG image" >&2
+  echo "served assets/hero-theme-light.png is not a valid PNG image" >&2
   exit 1
 fi
 if grep -Eiq '<!doctype html|<html' "$download_dir/main.dart.js"; then
