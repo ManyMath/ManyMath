@@ -118,7 +118,7 @@ class DocumentStore extends ChangeNotifier {
 
   /// Creates a synchronous, plugin-free store for widget tests and previews.
   /// Passing null [documents] seeds the bundled papers; passing an empty
-  /// iterable deliberately starts with no documents.
+  /// iterable starts with no documents.
   factory DocumentStore.inMemory({
     Iterable<ManyMathDocument>? documents,
     DateTime Function()? now,

@@ -611,7 +611,7 @@ class DocumentView extends StatelessWidget {
           border: Border.all(color: _palette.border),
         ),
         child: Text(
-          'Diagram ($kind) — not rendered',
+          'Preview unavailable for this $kind diagram',
           textAlign: TextAlign.center,
           style: TextStyle(
             color: _palette.dimText,
@@ -831,7 +831,7 @@ class DocumentView extends StatelessWidget {
     }
 
     // Edge labels can stick out past the node bounding box; pad the canvas
-    // to whatever the drawing actually covers.
+    // to whatever the drawing covers.
     var bounds = nodeRects.values.reduce((a, b) => a.expandToInclude(b));
     for (final label in edgeLabels) {
       bounds = bounds.expandToInclude(label.rect);

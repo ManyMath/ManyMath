@@ -581,7 +581,7 @@ class _EditorPageState extends State<EditorPage>
         content: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460),
           child: const Text(
-            'ManyMath is a focused LaTeX mathematics editor from ManyMath LLC. '
+            'ManyMath is a LaTeX mathematics editor from ManyMath LLC. '
             'Documents stay on this device and can be imported or exported as '
             '.tex files. The RaTeX engine renders the preview locally.',
           ),

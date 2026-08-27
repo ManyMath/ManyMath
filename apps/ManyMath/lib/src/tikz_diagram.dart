@@ -1,13 +1,10 @@
-/// A deliberately small TikZ *diagram* interpreter, in the same spirit as
-/// `latex_document.dart`: pure Dart, no engine, understands exactly the
-/// subset the bundled papers draw with — rectangular `\node`s at absolute
+/// A Dart interpreter for the TikZ subset used by the bundled papers:
+/// rectangular `\node`s at absolute
 /// coordinates or `positioning`-library relative placement, and straight
 /// `\draw (a) -- (b)` edges with optional arrowheads and midpoint labels.
 ///
 /// [parseTikzDiagram] returns null for anything outside that subset, so the
-/// caller can keep its generic "not rendered" placeholder: the interpreter
-/// never guesses at pictures it cannot draw faithfully, and never leaks raw
-/// TikZ source.
+/// caller can show a placeholder for unsupported diagrams.
 ///
 /// Positions use TikZ conventions: centimetres, y axis pointing *up*.
 /// [resolveTikzLayout] turns relative placements into concrete node rects;

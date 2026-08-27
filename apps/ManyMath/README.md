@@ -1,19 +1,18 @@
 # ManyMath
 
-ManyMath has two web surfaces in one static distribution:
+The ManyMath web distribution contains a website and an editor:
 
-- `/` is the semantic ManyMath LLC company home and product directory.
+- `/` is the ManyMath LLC website and product directory.
 - `/edit/` is the ManyUI LaTeX editor powered by the RaTeX WebAssembly engine.
 
 The editor keeps multiple documents in local device storage, includes built-in
 templates, and imports or exports standard `.tex` files. Formatting snippets,
 document counts, formula diagnostics, and exact click-to-source selection are
-available in both desktop and compact layouts. Rendering is explicit through
-the Render button or `Ctrl`/`Cmd`+`Enter`; accounts, collaboration, and cloud
-storage are not part of this release.
+available in desktop and compact layouts. Use Render or `Ctrl`/`Cmd`+`Enter`
+to update the preview, or enable Auto render to update it as you type.
+This release does not include accounts, collaboration, or cloud storage.
 
-The document layer intentionally supports a focused LaTeX subset around the
-RaTeX math engine: document metadata and `\maketitle`, sections, paragraphs,
+The document parser supports a subset of LaTeX around the RaTeX math engine: document metadata and `\maketitle`, sections, paragraphs,
 inline math, basic emphasis, single-level lists, comments, and common display
 math delimiters and environments.
 
@@ -30,7 +29,7 @@ The build script compiles the RaTeX WASM module, builds Flutter with a
 `/edit/` base href, and assembles the company site and editor under
 `apps/ManyMath/build/dist`.
 
-To inspect that exact artifact locally:
+To preview the build locally:
 
 ```sh
 python3 -m http.server 8080 --directory apps/ManyMath/build/dist
@@ -41,11 +40,11 @@ Open `http://127.0.0.1:8080/` for the company home or
 
 The production host must serve `.wasm` files as `application/wasm` and must not
 rewrite missing JavaScript or WASM files to either HTML entry point. The smoke
-script verifies those conditions using a literal static server.
+script verifies those conditions using a local static server.
 
 ## Develop the Flutter editor
 
-The workspace expects the ManyUI and Ratex repositories beside this repository
+The workspace expects the ManyUI and RaTeX repositories beside this repository
 at `../ManyUI` and `../ratex`.
 
 ```sh

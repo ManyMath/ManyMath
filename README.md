@@ -1,13 +1,13 @@
 # ManyMath
 
-This monorepo contains the ManyMath product surfaces:
+This repository contains the ManyMath editor and website:
 
 - `apps/ManyMath` is the local-first Flutter LaTeX editor.
 - `apps/ManyMath/site` is the ManyMath.com company and product website.
-- `apps/ManyMath/tool` builds both surfaces into one static distribution.
+- `apps/ManyMath/tool` builds the site and editor into one static distribution.
 
-The editor uses the shared ManyUI design system and the Ratex rendering engine.
-Development therefore expects sibling checkouts at `../ManyUI` and `../ratex`.
+The editor uses the shared ManyUI design system and the RaTeX rendering engine.
+Development requires sibling checkouts at `../ManyUI` and `../ratex`.
 
 ## Develop
 
@@ -17,7 +17,7 @@ flutter analyze apps/ManyMath
 flutter test apps/ManyMath/test
 ```
 
-Build the Ratex WebAssembly engine before running the editor in Chrome:
+Build the RaTeX WebAssembly engine before running the editor in Chrome:
 
 ```sh
 ./tool/build_wasm.sh
@@ -35,4 +35,4 @@ flutter run -d chrome
 Upload the contents of `apps/ManyMath/build/dist` to the ManyMath.com static
 host. The company site is served at `/` and the editor at `/edit/`.
 
-See `apps/ManyMath/README.md` for the editor and deployment contract.
+See `apps/ManyMath/README.md` for editor features and deployment requirements.

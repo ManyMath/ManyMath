@@ -1,4 +1,4 @@
-/// A deliberately small LaTeX *document* model on top of ratex's *math*
+/// A small LaTeX *document* model on top of ratex's *math*
 /// engine.
 ///
 /// RaTeX renders formulas; a full document page also has prose around
@@ -278,7 +278,7 @@ const _mathEnvironments = {
 const _codeEnvironments = {'lstlisting', 'verbatim', 'Verbatim', 'minted'};
 
 /// `amsthm`-style theorem environments captured as a [TheoremBlock], mapped
-/// to the noun their number is announced with. Deliberately only the
+/// to the noun their number is announced with. only the
 /// standard amsthm names: a paper's own `\newenvironment`-based theorem
 /// boxes (built on `mdframed`/`framed` rather than amsthm) have too much
 /// custom structure to approximate safely, so those are left alone rather
@@ -519,7 +519,7 @@ String _resolveReferences(
   Map<String, LabelInfo> labels,
   Map<String, int> citations,
 ) {
-  // Deliberately doesn't also bail when labels/citations are both empty: an
+  // doesn't also bail when labels/citations are both empty: an
   // undefined \ref must still render as "??" (matching real LaTeX), not
   // leak its raw source.
   if (!text.contains(r'\')) return text;
@@ -2442,9 +2442,8 @@ final _macroDefKeyword = RegExp(
 ///
 /// RaTeX's macro expander understands `\newcommand` and friends natively,
 /// but [parseLatexDocument] hands each formula to RaTeX in isolation, so a
-/// paper's own macros — used throughout nearly every real-world LaTeX
-/// document — would otherwise report as "Undefined control sequence" on
-/// every formula that uses them. Prepending this block to a formula before
+/// formula using a document macro would otherwise produce an
+/// "Undefined control sequence" error. Prepending this block to a formula before
 /// rendering (see `document_view.dart` and `formula_check.dart`) lets those
 /// macros resolve the same way they would in a full LaTeX run.
 ///
@@ -2568,8 +2567,7 @@ const _accentLetterMarks = {
 
 /// The text an accent command applies to: `{...}`-wrapped (`\"{u}`) or a
 /// single bare character (`\"u`). Declining a nested command (`\"{\i}`,
-/// LaTeX's dotless-i idiom) rather than guessing at it keeps this honest —
-/// the accent command is left as literal text instead.
+/// LaTeX's dotless-i idiom) leaves the unsupported accent as literal text.
 (String, int)? _accentBase(String source, int at) {
   if (at >= source.length) return null;
   if (source[at] == '{') {
@@ -2677,7 +2675,7 @@ MacroDefinition? _parseDefDeclaration(String text, int from) {
 /// paper's own shorthand (`\fn{name}`, `\ghlink{path}{text}`, and the like)
 /// is common in real-world LaTeX and would otherwise show up as raw source.
 ///
-/// This is intentionally not a full TeX macro engine: no delimited
+/// This is not a full TeX macro engine: no delimited
 /// parameters, no conditionals, no expansion inside an argument before it's
 /// substituted. Bounded recursion (macros expanding to other macros) keeps
 /// a definition cycle from looping forever.
