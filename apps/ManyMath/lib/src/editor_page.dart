@@ -733,33 +733,54 @@ class _EditorPageState extends State<EditorPage>
               final showDocuments =
                   constraints.maxWidth >= documentBrowserBreakpoint &&
                   _documentsVisible;
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  if (showDocuments) ...<Widget>[
+              final workspace = constraints.maxWidth < editorCompactBreakpoint
+                  ? _buildCompactWorkspace()
+                  : _buildSplitWorkspace();
+              if (!showDocuments) {
+                return workspace;
+              }
+              if (_documentsMinimized) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
                     SizedBox(
-                      width: _documentsMinimized ? 52 : 244,
-                      child: _documentsMinimized
-                          ? _MinimizedPane(
-                              title: 'Documents',
-                              icon: MIconData.folder,
-                              onExpand: _toggleDocumentsMinimized,
-                            )
-                          : DocumentBrowser(
-                              store: store,
-                              selectedId: _document.id,
-                              onSelect: _selectDocument,
-                              onCreate: _createDocument,
-                              onAction: _handleDocumentAction,
-                              onMinimize: _toggleDocumentsMinimized,
-                            ),
+                      width: 52,
+                      child: _MinimizedPane(
+                        title: 'Documents',
+                        icon: MIconData.folder,
+                        onExpand: _toggleDocumentsMinimized,
+                      ),
                     ),
                     const MDivider(orientation: MDividerOrientation.vertical),
+                    Expanded(child: workspace),
                   ],
-                  Expanded(
-                    child: constraints.maxWidth < editorCompactBreakpoint
-                        ? _buildCompactWorkspace()
-                        : _buildSplitWorkspace(),
+                );
+              }
+              final documentsShare = (244 / constraints.maxWidth).clamp(
+                0.15,
+                0.4,
+              );
+              return MResizable(
+                semanticLabel: 'Documents and editor pane sizes',
+                initialSizes: <double>[documentsShare, 1 - documentsShare],
+                children: <MResizableChild>[
+                  MResizableChild(
+                    id: 'documents',
+                    minSize: 0.15,
+                    maxSize: 0.4,
+                    child: DocumentBrowser(
+                      store: store,
+                      selectedId: _document.id,
+                      onSelect: _selectDocument,
+                      onCreate: _createDocument,
+                      onAction: _handleDocumentAction,
+                      onMinimize: _toggleDocumentsMinimized,
+                    ),
+                  ),
+                  MResizableChild(
+                    id: 'workspace',
+                    minSize: 0.5,
+                    child: workspace,
                   ),
                 ],
               );

@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manymath/src/app.dart';
+import 'package:manymath/src/document_browser.dart';
 import 'package:manymath/src/document_store.dart';
 import 'package:manymath/src/document_view.dart';
 import 'package:manymath/src/editor_page.dart';
@@ -84,7 +85,7 @@ void main() {
   ) async {
     await pumpEditor(tester);
 
-    expect(find.byType(MResizable), findsOneWidget);
+    expect(find.byType(MResizable), findsNWidgets(2));
     expect(
       find.byWidgetPredicate(
         (widget) => widget is MSegmentedControl<EditorSurface>,
@@ -137,12 +138,12 @@ void main() {
       find.byKey(const ValueKey<String>('expand-Source-pane')),
       findsOneWidget,
     );
-    expect(find.byType(MResizable), findsNothing);
+    expect(find.byType(MResizable), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey<String>('expand-Source-pane')));
     await tester.pump();
 
-    expect(find.byType(MResizable), findsOneWidget);
+    expect(find.byType(MResizable), findsNWidgets(2));
 
     await tester.tap(find.bySemanticsLabel('Minimize preview'));
     await tester.pump();
@@ -156,7 +157,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey<String>('expand-Preview-pane')));
     await tester.pump();
 
-    expect(find.byType(MResizable), findsOneWidget);
+    expect(find.byType(MResizable), findsNWidgets(2));
 
     expect(find.bySemanticsLabel('Maximize preview'), findsOneWidget);
     await tester.tap(find.bySemanticsLabel('Maximize preview'));
@@ -184,6 +185,25 @@ void main() {
       findsOneWidget,
     );
     expect(find.bySemanticsLabel('Maximize preview'), findsOneWidget);
+  });
+
+  testWidgets('documents pane separator drags to resize', (tester) async {
+    await pumpEditor(tester);
+
+    final browser = find.byType(DocumentBrowser);
+    expect(browser, findsOneWidget);
+    final before = tester.getSize(browser).width;
+
+    final resizable = find.bySemanticsLabel('Documents and editor pane sizes');
+    expect(resizable, findsOneWidget);
+    final rect = tester.getRect(resizable);
+    await tester.dragFrom(
+      Offset(rect.left + before, rect.center.dy),
+      const Offset(80, 0),
+    );
+    await tester.pump();
+
+    expect(tester.getSize(browser).width, greaterThan(before));
   });
 
   testWidgets('compact workspace switches between source and preview', (
