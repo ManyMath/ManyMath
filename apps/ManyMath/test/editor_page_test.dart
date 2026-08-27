@@ -206,6 +206,32 @@ void main() {
     expect(tester.getSize(browser).width, greaterThan(before));
   });
 
+  testWidgets('source maximize minimizes the other panes', (tester) async {
+    await pumpEditor(tester);
+
+    expect(find.bySemanticsLabel('Maximize source'), findsOneWidget);
+    await tester.tap(find.bySemanticsLabel('Maximize source'));
+    await tester.pump();
+
+    expect(find.byType(MResizable), findsNothing);
+    expect(find.byType(EditableText), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('expand-Preview-pane')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('expand-Documents-pane')),
+      findsOneWidget,
+    );
+    expect(find.bySemanticsLabel('Restore split view'), findsOneWidget);
+
+    await tester.tap(find.bySemanticsLabel('Restore split view'));
+    await tester.pump();
+
+    expect(find.byType(MResizable), findsNWidgets(2));
+    expect(find.bySemanticsLabel('Maximize source'), findsOneWidget);
+  });
+
   testWidgets('compact workspace switches between source and preview', (
     tester,
   ) async {

@@ -131,6 +131,9 @@ class _EditorPageState extends State<EditorPage>
   bool get _previewMaximized =>
       _documentsMinimized && _sourceMinimized && !_previewMinimized;
 
+  bool get _sourceMaximized =>
+      _documentsMinimized && _previewMinimized && !_sourceMinimized;
+
   @override
   void initState() {
     super.initState();
@@ -879,7 +882,7 @@ class _EditorPageState extends State<EditorPage>
       return Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Expanded(child: _buildSourcePane()),
+          Expanded(child: _buildSourcePane(showMaximize: true)),
           const MDivider(orientation: MDividerOrientation.vertical),
           SizedBox(
             width: 52,
@@ -903,7 +906,7 @@ class _EditorPageState extends State<EditorPage>
           id: 'source',
           minSize: 0.3,
           maxSize: 0.7,
-          child: _buildSourcePane(),
+          child: _buildSourcePane(showMaximize: true),
         ),
         MResizableChild(
           id: 'preview',
@@ -915,7 +918,7 @@ class _EditorPageState extends State<EditorPage>
     );
   }
 
-  Widget _buildSourcePane() {
+  Widget _buildSourcePane({bool showMaximize = false}) {
     final theme = MTheme.of(context);
     return ColoredBox(
       color: theme.colors.card,
@@ -955,6 +958,17 @@ class _EditorPageState extends State<EditorPage>
                 size: MButtonSize.xs,
                 onPressed: _copySource,
               ),
+              if (showMaximize)
+                MIconButton(
+                  icon: _sourceMaximized
+                      ? MIconData.restore
+                      : MIconData.maximize,
+                  label: _sourceMaximized
+                      ? 'Restore split view'
+                      : 'Maximize source',
+                  size: MButtonSize.xs,
+                  onPressed: _toggleSourceMaximized,
+                ),
             ],
           ),
           const MDivider(),
@@ -1048,6 +1062,15 @@ class _EditorPageState extends State<EditorPage>
       _documentsMinimized = shouldMaximize;
       _sourceMinimized = shouldMaximize;
       _previewMinimized = false;
+    });
+  }
+
+  void _toggleSourceMaximized() {
+    setState(() {
+      final shouldMaximize = !_sourceMaximized;
+      _documentsMinimized = shouldMaximize;
+      _previewMinimized = shouldMaximize;
+      _sourceMinimized = false;
     });
   }
 
