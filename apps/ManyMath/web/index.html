@@ -58,6 +58,9 @@
       bootMessage.textContent = message;
       bootRetry.hidden = false;
     };
+    const CRITICAL_BOOT_ASSET =
+      /flutter_bootstrap\.js|main\.dart\.js|ratex_ffi\.wasm|canvaskit/;
+    let bootDone = false;
     const startupTimer = setTimeout(
       () => showBootFailure('ManyMath Editor is taking longer than expected.'),
       15000,
@@ -65,16 +68,25 @@
     bootRetry.addEventListener('click', () => location.reload());
     window.addEventListener(
       'error',
-      () => showBootFailure('ManyMath Editor could not start.'),
-      { once: true, capture: true },
+      (event) => {
+        if (bootDone) return;
+        const target = event.target;
+        const url =
+          target && target !== window ? target.src || target.href || '' : '';
+        // Resource errors on non-critical assets (icons, fonts) are not
+        // fatal; script errors and critical asset failures are.
+        if (url && !CRITICAL_BOOT_ASSET.test(url)) return;
+        showBootFailure('ManyMath Editor could not start.');
+      },
+      { capture: true },
     );
-    window.addEventListener(
-      'unhandledrejection',
-      () => showBootFailure('ManyMath Editor could not start.'),
-      { once: true },
-    );
+    window.addEventListener('unhandledrejection', () => {
+      if (bootDone) return;
+      showBootFailure('ManyMath Editor could not start.');
+    });
     new MutationObserver((_, observer) => {
       if (document.querySelector('flutter-view')) {
+        bootDone = true;
         clearTimeout(startupTimer);
         bootStatus.remove();
         observer.disconnect();
