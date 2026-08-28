@@ -37,3 +37,8 @@ flutter:
         - asset: fonts/lmroman10-bolditalic.otf
           weight: 700
           style: italic
+    - family: JetBrains Mono
+      fonts:
+        - asset: fonts/jetbrains-mono-var.ttf
+        - asset: fonts/jetbrains-mono-var-italic.ttf
+          style: italic

@@ -702,7 +702,7 @@ Content.
         tester.widget<EditableText>(find.byType(EditableText));
 
     expect(documentView().fontFamily, 'Latin Modern Roman');
-    expect(editor().style.fontFamily, 'ui-monospace');
+    expect(editor().style.fontFamily, 'JetBrains Mono');
 
     await tester.tap(find.bySemanticsLabel(RegExp('Preview font:')));
     await tester.pumpAndSettle();
@@ -710,7 +710,7 @@ Content.
     await tester.pumpAndSettle();
 
     expect(documentView().fontFamily, 'Georgia');
-    expect(editor().style.fontFamily, 'ui-monospace');
+    expect(editor().style.fontFamily, 'JetBrains Mono');
 
     await tester.tap(find.byType(MSelect<String>));
     await tester.pumpAndSettle();

@@ -8,6 +8,22 @@ import 'latex_document.dart';
 import 'preview_theme.dart';
 import 'tikz_diagram.dart';
 
+/// The bundled brand code face, first in every monospace stack so `\texttt`
+/// runs, code blocks, and TikZ typewriter labels render identically on every
+/// host; the generic families behind it only serve where it failed to load.
+const String monoFontFamily = 'JetBrains Mono';
+const List<String> monoFontFallback = <String>[
+  'ui-monospace',
+  'Menlo',
+  'Consolas',
+  'monospace',
+];
+
+/// Monospace runs render slightly below the surrounding size: JetBrains
+/// Mono's x-height is much taller than Latin Modern's, so equal point sizes
+/// make `\texttt` look bigger than the prose it sits in.
+const double monoFontScale = 0.88;
+
 class DocumentView extends StatelessWidget {
   const DocumentView({
     required this.blocks,
@@ -73,12 +89,14 @@ class DocumentView extends StatelessWidget {
               fontSize: _bodySize,
               height: 1.55,
               fontFamily: fontFamily,
-              fontFamilyFallback: const <String>[
-                'Georgia',
-                'Times New Roman',
-                'Noto Serif',
-                'serif',
-              ],
+              fontFamilyFallback: fontFamily == monoFontFamily
+                  ? monoFontFallback
+                  : const <String>[
+                      'Georgia',
+                      'Times New Roman',
+                      'Noto Serif',
+                      'serif',
+                    ],
             );
             return SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -160,7 +178,8 @@ class DocumentView extends StatelessWidget {
         'Formula error: ${error.message}',
         style: TextStyle(
           color: MTheme.of(context).colors.destructive,
-          fontFamily: 'ui-monospace',
+          fontFamily: monoFontFamily,
+          fontFamilyFallback: monoFontFallback,
           fontSize: fontSize * 0.68,
         ),
       ),
@@ -320,7 +339,8 @@ class DocumentView extends StatelessWidget {
               child: Text(
                 block.code,
                 style: TextStyle(
-                  fontFamily: 'ui-monospace',
+                  fontFamily: monoFontFamily,
+                  fontFamilyFallback: monoFontFallback,
                   fontSize: _bodySize * 0.85,
                   height: 1.4,
                 ),
@@ -582,7 +602,9 @@ class DocumentView extends StatelessWidget {
             style: TextStyle(
               fontWeight: span.bold ? FontWeight.w700 : null,
               fontStyle: span.italic ? FontStyle.italic : null,
-              fontFamily: span.monospace ? 'ui-monospace' : null,
+              fontFamily: span.monospace ? monoFontFamily : null,
+              fontFamilyFallback: span.monospace ? monoFontFallback : null,
+              fontSize: span.monospace ? fontSize * monoFontScale : null,
               decoration: span.underline ? TextDecoration.underline : null,
             ),
           ),
@@ -647,7 +669,8 @@ class DocumentView extends StatelessWidget {
       style: TextStyle(
         fontSize: fontSize,
         height: 1.3,
-        fontFamily: monospace ? 'ui-monospace' : null,
+        fontFamily: monospace ? monoFontFamily : null,
+        fontFamilyFallback: monospace ? monoFontFallback : null,
         color: _palette.ink,
       ),
     );

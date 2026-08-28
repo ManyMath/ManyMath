@@ -24,9 +24,11 @@ import 'theme.dart';
 const double editorCompactBreakpoint = 780;
 const double documentBrowserBreakpoint = 1100;
 
-/// Choices for the source pane's font dropdown. The default,
-/// ui-monospace, is the code-optimized system face where available.
+/// Choices for the source pane's font dropdown. The default is the bundled
+/// brand code face, which renders identically on every host; the rest are
+/// system faces for users who prefer their own.
 const List<String> sourceFontFamilies = <String>[
+  'JetBrains Mono',
   'ui-monospace',
   'monospace',
   'Menlo',
@@ -34,14 +36,16 @@ const List<String> sourceFontFamilies = <String>[
   'Courier New',
 ];
 
-/// Choices for the preview pane's font dropdown.
+/// Choices for the preview pane's font dropdown. Latin Modern Roman and
+/// JetBrains Mono are bundled, so they render the same everywhere; the
+/// generic families they replace relied on host fonts the web build cannot
+/// resolve.
 const List<String> previewFontFamilies = <String>[
   'Latin Modern Roman',
   'Georgia',
   'Times New Roman',
   'Noto Serif',
-  'sans-serif',
-  'monospace',
+  'JetBrains Mono',
 ];
 const Duration autoRenderDelay = Duration(milliseconds: 350);
 
