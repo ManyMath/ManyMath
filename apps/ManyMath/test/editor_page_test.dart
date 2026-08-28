@@ -502,6 +502,10 @@ Content.
     await tester.tap(find.bySemanticsLabel('Use dark theme'));
     await tester.pump();
 
+    expect(find.bySemanticsLabel('Use terminal theme'), findsOneWidget);
+    await tester.tap(find.bySemanticsLabel('Use terminal theme'));
+    await tester.pump();
+
     expect(find.bySemanticsLabel('Use night theme'), findsOneWidget);
     await tester.tap(find.bySemanticsLabel('Use night theme'));
     await tester.pump();
@@ -626,51 +630,33 @@ Content.
   PreviewTheme previewTheme(WidgetTester tester) =>
       tester.widget<DocumentView>(find.byType(DocumentView)).previewTheme;
 
-  Future<void> tapPreviewThemeToggle(WidgetTester tester) async {
-    await tester.tap(find.bySemanticsLabel(RegExp('Preview theme:')));
+  Future<void> tapAppThemeToggle(WidgetTester tester, String label) async {
+    await tester.tap(find.bySemanticsLabel(label));
     await tester.pump();
   }
 
-  testWidgets('preview theme toggle cycles four modes in order', (
+  testWidgets('app theme toggle restyles the app and preview together', (
     tester,
   ) async {
     await pumpEditor(tester);
     expect(previewTheme(tester), PreviewTheme.light);
 
-    await tapPreviewThemeToggle(tester);
+    await tapAppThemeToggle(tester, 'Use dark theme');
     expect(previewTheme(tester), PreviewTheme.dark);
-    await tapPreviewThemeToggle(tester);
+    await tapAppThemeToggle(tester, 'Use terminal theme');
     expect(previewTheme(tester), PreviewTheme.terminal);
-    await tapPreviewThemeToggle(tester);
+    await tapAppThemeToggle(tester, 'Use night theme');
     expect(previewTheme(tester), PreviewTheme.night);
-    await tapPreviewThemeToggle(tester);
+    await tapAppThemeToggle(tester, 'Use light theme');
     expect(previewTheme(tester), PreviewTheme.light);
+
+    // The preview pane has no toggle of its own left behind.
+    expect(find.bySemanticsLabel(RegExp('Preview theme:')), findsNothing);
   });
 
-  testWidgets('app theme toggle leaves the preview theme alone', (
+  testWidgets('app theme toggle cycles light, dark, terminal, and night', (
     tester,
   ) async {
-    await pumpEditor(tester);
-
-    for (final label in <String>[
-      'Use dark theme',
-      'Use night theme',
-      'Use light theme',
-    ]) {
-      await tester.tap(find.bySemanticsLabel(label));
-      await tester.pump();
-      expect(previewTheme(tester), PreviewTheme.light);
-    }
-
-    await tapPreviewThemeToggle(tester);
-    expect(previewTheme(tester), PreviewTheme.dark);
-
-    await tester.tap(find.bySemanticsLabel('Use dark theme'));
-    await tester.pump();
-    expect(previewTheme(tester), PreviewTheme.dark);
-  });
-
-  testWidgets('app theme toggle cycles light, dark, and night', (tester) async {
     await pumpEditor(tester);
     MWidgetsApp app() => tester.widget<MWidgetsApp>(find.byType(MWidgetsApp));
 
@@ -684,6 +670,10 @@ Content.
     await tap('Use dark theme');
     expect(app().themeMode, MThemeMode.dark);
 
+    await tap('Use terminal theme');
+    expect(app().themeMode, MThemeMode.light);
+    expect(app().theme?.colors.foreground, manyMathTerminalGreen);
+
     await tap('Use night theme');
     expect(app().themeMode, MThemeMode.light);
     expect(app().theme?.colors.foreground, manyMathNightRed);
@@ -691,6 +681,7 @@ Content.
     await tap('Use light theme');
     expect(app().themeMode, MThemeMode.light);
     expect(app().theme?.colors.foreground, isNot(manyMathNightRed));
+    expect(app().theme?.colors.foreground, isNot(manyMathTerminalGreen));
   });
 
   testWidgets('source and preview fonts change independently', (tester) async {

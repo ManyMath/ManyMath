@@ -69,16 +69,20 @@ class _ManyMathAppState extends State<ManyMathApp> with WidgetsBindingObserver {
     return MWidgetsApp(
       title: 'ManyMath Editor',
       color: manyMathGreen,
-      theme: _themeMode == AppThemeMode.night
-          ? manyMathNightTheme()
-          : manyMathLightTheme(),
+      theme: switch (_themeMode) {
+        AppThemeMode.night => manyMathNightTheme(),
+        AppThemeMode.terminal => manyMathTerminalTheme(),
+        _ => manyMathLightTheme(),
+      },
       darkTheme: manyMathDarkTheme(),
-      // manyui's MThemeMode has no night value, so night mode rides the
-      // light slot, which holds the night theme above.
+      // manyui's MThemeMode has no terminal/night values, so both ride the
+      // light slot, which holds the right theme above.
       themeMode: switch (_themeMode) {
         AppThemeMode.system => MThemeMode.system,
         AppThemeMode.dark => MThemeMode.dark,
-        AppThemeMode.light || AppThemeMode.night => MThemeMode.light,
+        AppThemeMode.light ||
+        AppThemeMode.terminal ||
+        AppThemeMode.night => MThemeMode.light,
       },
       debugShowCheckedModeBanner: false,
       home: EditorPage(

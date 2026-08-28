@@ -118,7 +118,6 @@ class _EditorPageState extends State<EditorPage>
   String? _engineError;
   String? _saveError;
   double _previewZoom = 1;
-  PreviewTheme _previewTheme = PreviewTheme.light;
   String _sourceFontFamily = sourceFontFamilies.first;
   String _previewFontFamily = previewFontFamilies.first;
   bool _documentsMinimized = false;
@@ -347,10 +346,6 @@ class _EditorPageState extends State<EditorPage>
 
   void _setZoom(double next) {
     setState(() => _previewZoom = next.clamp(0.7, 1.4));
-  }
-
-  void _cyclePreviewTheme() {
-    setState(() => _previewTheme = _previewTheme.next);
   }
 
   void _selectDocument(ManyMathDocument document) {
@@ -622,6 +617,11 @@ class _EditorPageState extends State<EditorPage>
       AppThemeMode.dark => (
         MIconData.moon,
         manyMathGreenDark,
+        'Use terminal theme',
+      ),
+      AppThemeMode.terminal => (
+        MIconData.chevronRight,
+        manyMathTerminalGreen,
         'Use night theme',
       ),
       _ => (MIconData.moon, manyMathNightRed, 'Use light theme'),
@@ -1036,13 +1036,17 @@ class _EditorPageState extends State<EditorPage>
   }
 
   Widget _buildPreviewPane({bool showMaximize = false}) {
+    final platformDark =
+        MediaQuery.platformBrightnessOf(context) == Brightness.dark;
     return _PreviewPane(
       key: _previewPaneKey,
       blocks: _blocks,
       macroPreamble: _macroPreamble,
       zoom: _previewZoom,
-      previewTheme: _previewTheme,
-      onCyclePreviewTheme: _cyclePreviewTheme,
+      previewTheme: previewThemeForAppMode(
+        widget.themeMode,
+        platformDark: platformDark,
+      ),
       previewFont: _previewFontFamily,
       onPreviewFontChanged: (value) =>
           setState(() => _previewFontFamily = value),
@@ -1263,7 +1267,6 @@ class _PreviewPane extends StatelessWidget {
     required this.macroPreamble,
     required this.zoom,
     required this.previewTheme,
-    required this.onCyclePreviewTheme,
     required this.previewFont,
     required this.onPreviewFontChanged,
     required this.engineLoading,
@@ -1282,7 +1285,6 @@ class _PreviewPane extends StatelessWidget {
   final String macroPreamble;
   final double zoom;
   final PreviewTheme previewTheme;
-  final VoidCallback onCyclePreviewTheme;
   final String previewFont;
   final ValueChanged<String> onPreviewFontChanged;
   final bool engineLoading;
@@ -1313,10 +1315,6 @@ class _PreviewPane extends StatelessWidget {
                 _PreviewFontMenu(
                   previewFont: previewFont,
                   onChanged: onPreviewFontChanged,
-                ),
-                _PreviewThemeButton(
-                  theme: previewTheme,
-                  onPressed: onCyclePreviewTheme,
                 ),
                 _SymbolButton(
                   symbol: '−',
@@ -1567,8 +1565,8 @@ class _PreviewFontMenuState extends State<_PreviewFontMenu> {
 
 /// The app-wide theme toggle in the header. Same ghost chrome as the other
 /// header icon buttons, but with the tint set on MIcon directly: MButton
-/// forces its own IconTheme color, so MIconButton can't show the red glyph
-/// that advertises night mode.
+/// forces its own IconTheme color, so MIconButton can't show the tinted
+/// glyphs that advertise terminal and night mode.
 class _AppThemeButton extends StatelessWidget {
   const _AppThemeButton({
     required this.icon,
@@ -1593,51 +1591,6 @@ class _AppThemeButton extends StatelessWidget {
         onPressed: onPressed,
         style: const MButtonStyleDelta(minHeight: 32, padding: EdgeInsets.zero),
         child: MIcon(icon, size: 16, color: color, excludeFromSemantics: true),
-      ),
-    );
-  }
-}
-
-/// The preview-pane theme toggle: one unchanging moon glyph on a chip
-/// painted with the mode's own paper and ink, so the button face previews
-/// the mode (and a light icon never disappears on a light app header).
-/// The render itself changing makes the mode obvious; the semantics label
-/// still names it for screen readers.
-class _PreviewThemeButton extends StatelessWidget {
-  const _PreviewThemeButton({required this.theme, required this.onPressed});
-
-  final PreviewTheme theme;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = previewPalette(theme);
-    return SizedBox.square(
-      dimension: 32,
-      child: MButton(
-        semanticLabel:
-            'Preview theme: ${theme.label}. '
-            'Activate for ${theme.next.label}',
-        variant: MButtonVariant.ghost,
-        size: MButtonSize.xs,
-        onPressed: onPressed,
-        style: const MButtonStyleDelta(minHeight: 32, padding: EdgeInsets.zero),
-        child: Container(
-          width: 18,
-          height: 18,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: palette.paper,
-            border: Border.all(color: palette.frameBorder),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: MIcon(
-            MIconData.moon,
-            size: 12,
-            color: palette.ink,
-            excludeFromSemantics: true,
-          ),
-        ),
       ),
     );
   }

@@ -1,23 +1,27 @@
 import 'dart:ui' show Color;
 
-/// Color scheme of the rendered document preview, independent of the
-/// app-wide theme. The header toggle switches the whole app between light
-/// and dark; the preview pane's own toggle cycles these four modes and
-/// affects only the rendered paper.
+import 'theme.dart';
+
+/// Color scheme of the rendered document preview. The preview has no toggle
+/// of its own: it follows the app-wide [AppThemeMode], so the whole window
+/// restyles together. [PreviewTheme.light] is also the export default —
+/// documents rendered for export always use black ink on white paper,
+/// regardless of the on-screen mode.
 enum PreviewTheme { light, dark, terminal, night }
 
-extension PreviewThemeCycling on PreviewTheme {
-  /// The next mode in the light -> dark -> terminal -> night cycle.
-  PreviewTheme get next =>
-      PreviewTheme.values[(index + 1) % PreviewTheme.values.length];
-
-  String get label => switch (this) {
-    PreviewTheme.light => 'Light',
-    PreviewTheme.dark => 'Dark',
-    PreviewTheme.terminal => 'Terminal',
-    PreviewTheme.night => 'Night',
-  };
-}
+/// The document palette an app-wide theme mode maps to. System resolves by
+/// the platform brightness the caller passes in.
+PreviewTheme previewThemeForAppMode(
+  AppThemeMode mode, {
+  bool platformDark = false,
+}) => switch (mode) {
+  AppThemeMode.light => PreviewTheme.light,
+  AppThemeMode.dark => PreviewTheme.dark,
+  AppThemeMode.terminal => PreviewTheme.terminal,
+  AppThemeMode.night => PreviewTheme.night,
+  AppThemeMode.system =>
+    platformDark ? PreviewTheme.dark : PreviewTheme.light,
+};
 
 /// A paper/ink pair plus the supporting shades the document view derives
 /// from them (borders, code and theorem panels, dimmed text, TikZ label

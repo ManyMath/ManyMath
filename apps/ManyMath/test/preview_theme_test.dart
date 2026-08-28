@@ -1,22 +1,20 @@
 import 'package:flutter/widgets.dart' show Color;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manymath/src/preview_theme.dart';
+import 'package:manymath/src/theme.dart';
 
 void main() {
-  test('preview theme cycles light -> dark -> terminal -> night -> light', () {
-    var theme = PreviewTheme.light;
-    final seen = <PreviewTheme>[theme];
-    for (var i = 0; i < 4; i++) {
-      theme = theme.next;
-      seen.add(theme);
-    }
-    expect(seen, <PreviewTheme>[
-      PreviewTheme.light,
+  test('app theme modes map to their document palettes', () {
+    expect(previewThemeForAppMode(AppThemeMode.light), PreviewTheme.light);
+    expect(previewThemeForAppMode(AppThemeMode.dark), PreviewTheme.dark);
+    expect(previewThemeForAppMode(AppThemeMode.terminal), PreviewTheme.terminal);
+    expect(previewThemeForAppMode(AppThemeMode.night), PreviewTheme.night);
+
+    expect(previewThemeForAppMode(AppThemeMode.system), PreviewTheme.light);
+    expect(
+      previewThemeForAppMode(AppThemeMode.system, platformDark: true),
       PreviewTheme.dark,
-      PreviewTheme.terminal,
-      PreviewTheme.night,
-      PreviewTheme.light,
-    ]);
+    );
   });
 
   test('palettes: light keeps the legacy pair, others are ink on black', () {
