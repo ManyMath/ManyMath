@@ -32,7 +32,7 @@ void main() {
     );
     expect(previewPalette(PreviewTheme.terminal).ink, const Color(0xFF33FF33));
     expect(previewPalette(PreviewTheme.night).paper, const Color(0xFF000000));
-    expect(previewPalette(PreviewTheme.night).ink, const Color(0xFFFF6666));
+    expect(previewPalette(PreviewTheme.night).ink, const Color(0xFFFF8080));
   });
 
   test('derived shades stay between paper and ink', () {

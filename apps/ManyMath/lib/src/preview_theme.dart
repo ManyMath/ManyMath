@@ -54,6 +54,6 @@ PreviewPalette previewPalette(PreviewTheme theme) => switch (theme) {
   ),
   PreviewTheme.night => const PreviewPalette._(
     Color(0xFF000000),
-    Color(0xFFFF6666),
+    Color(0xFFFF8080),
   ),
 };

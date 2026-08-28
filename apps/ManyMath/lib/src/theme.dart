@@ -9,8 +9,10 @@ const Color manyMathGreenDark = Color(0xFF78C87C);
 const Color manyMathTerminalGreen = Color(0xFF33FF33);
 
 /// The red shared by the app-wide night mode and its toggle icon, matching
-/// the preview pane's night mode ink.
-const Color manyMathNightRed = Color(0xFFFF3333);
+/// the preview pane's night ink. Saturated reds optically vibrate on black
+/// and read poorly even when they pass WCAG contrast, so this is a lighter,
+/// desaturated red (8.6:1 on black) rather than a pure #FF3333-style one.
+const Color manyMathNightRed = Color(0xFFFF8080);
 
 /// The app-wide color schemes; the document preview follows the same mode,
 /// so one header toggle restyles the whole window at once. System only
