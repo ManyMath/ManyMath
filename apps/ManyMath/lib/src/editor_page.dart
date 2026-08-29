@@ -24,6 +24,11 @@ import 'theme.dart';
 const double editorCompactBreakpoint = 780;
 const double documentBrowserBreakpoint = 1100;
 
+/// Preview zoom range: 70% fits wide tables and TikZ diagrams on narrow
+/// windows; 300% is a readability ceiling, not a layout target.
+const double minPreviewZoom = 0.7;
+const double maxPreviewZoom = 3.0;
+
 /// Choices for the source pane's font dropdown. The default is the bundled
 /// brand code face, which renders identically on every host; the rest are
 /// system faces for users who prefer their own.
@@ -345,7 +350,7 @@ class _EditorPageState extends State<EditorPage>
   }
 
   void _setZoom(double next) {
-    setState(() => _previewZoom = next.clamp(0.7, 1.4));
+    setState(() => _previewZoom = next.clamp(minPreviewZoom, maxPreviewZoom));
   }
 
   void _selectDocument(ManyMathDocument document) {
@@ -1053,11 +1058,13 @@ class _EditorPageState extends State<EditorPage>
       engineLoading: _engineLoading,
       engineError: _engineError,
       onRetry: _initializeEngine,
-      onZoomOut: _previewZoom <= 0.7
+      onZoomOut: _previewZoom <= minPreviewZoom
           ? null
           : () => _setZoom(_previewZoom - 0.1),
       onResetZoom: _previewZoom == 1 ? null : () => _setZoom(1),
-      onZoomIn: _previewZoom >= 1.4 ? null : () => _setZoom(_previewZoom + 0.1),
+      onZoomIn: _previewZoom >= maxPreviewZoom
+          ? null
+          : () => _setZoom(_previewZoom + 0.1),
       maximized: _previewMaximized,
       onToggleMaximize: showMaximize ? _togglePreviewMaximized : null,
       onMinimize: showMaximize ? _togglePreviewMinimized : null,

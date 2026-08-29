@@ -711,4 +711,22 @@ Content.
     expect(editor().style.fontFamily, 'Menlo');
     expect(documentView().fontFamily, 'Georgia');
   });
+
+  testWidgets('preview zoom tops out at 300 percent', (tester) async {
+    await pumpEditor(tester);
+
+    Future<void> zoomIn() async {
+      await tester.tap(find.bySemanticsLabel('Zoom in'));
+      await tester.pump();
+    }
+
+    for (var i = 0; i < 25; i++) {
+      await zoomIn();
+    }
+    expect(find.text('300%'), findsOneWidget);
+
+    // The button disables at the ceiling: another tap changes nothing.
+    await zoomIn();
+    expect(find.text('300%'), findsOneWidget);
+  });
 }
