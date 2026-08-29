@@ -2,7 +2,6 @@ import 'papers/frostlass_code_audit.dart';
 import 'papers/frostlass_thresholdization.dart';
 import 'papers/rage_audit.dart';
 import 'papers/rage_guide.dart';
-import 'papers/tclsag_implementation_review.dart';
 
 /// A real-world LaTeX paper bundled with ManyMath, used to seed a fresh
 /// document store so the editor and the RaTeX engine are exercised against
@@ -33,8 +32,4 @@ const papers = <PaperDocument>[
     source: rageAuditSource,
   ),
   PaperDocument(name: 'Rage Guide', source: rageGuideSource),
-  PaperDocument(
-    name: 'T-CLSAG Implementation Security Audit',
-    source: tclsagImplementationReviewSource,
-  ),
 ];
