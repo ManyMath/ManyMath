@@ -8,6 +8,7 @@ import 'package:manymath/src/document_view.dart';
 import 'package:manymath/src/editor_page.dart';
 import 'package:manymath/src/formula_check.dart';
 import 'package:manymath/src/latex_document.dart';
+import 'package:manymath/src/page_setup.dart';
 import 'package:manymath/src/preview_theme.dart';
 import 'package:manymath/src/theme.dart';
 import 'package:manyui/manyui.dart';
@@ -728,5 +729,39 @@ Content.
     // The button disables at the ceiling: another tap changes nothing.
     await zoomIn();
     expect(find.text('300%'), findsOneWidget);
+  });
+
+  testWidgets('page setup switches the preview between scroll and pages', (
+    tester,
+  ) async {
+    await pumpEditor(tester);
+    DocumentView documentView() =>
+        tester.widget<DocumentView>(find.byType(DocumentView));
+
+    // Continuous by default: no page size, and US Letter preselected.
+    expect(documentView().pageSize, isNull);
+    expect(
+      find.bySemanticsLabel('Page setup: Continuous layout, US Letter'),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.bySemanticsLabel(RegExp('Page setup: Continuous layout')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pages'));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(documentView().pageSize, PageSize.usLetter);
+    expect(find.bySemanticsLabel(RegExp('Page 1 of ')), findsOneWidget);
+
+    await tester.tap(find.bySemanticsLabel(RegExp('Page setup: Pages')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continuous'));
+    await tester.pumpAndSettle();
+
+    expect(documentView().pageSize, isNull);
   });
 }

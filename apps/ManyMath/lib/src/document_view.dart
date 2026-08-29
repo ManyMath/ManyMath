@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
@@ -5,6 +6,7 @@ import 'package:manyui/manyui.dart';
 import 'package:ratex_flutter/ratex_flutter.dart';
 
 import 'latex_document.dart';
+import 'page_setup.dart';
 import 'preview_theme.dart';
 import 'tikz_diagram.dart';
 
@@ -24,13 +26,14 @@ const List<String> monoFontFallback = <String>[
 /// make `\texttt` look bigger than the prose it sits in.
 const double monoFontScale = 0.88;
 
-class DocumentView extends StatelessWidget {
+class DocumentView extends StatefulWidget {
   const DocumentView({
     required this.blocks,
     this.macroPreamble = '',
     this.zoom = 1,
     this.previewTheme = PreviewTheme.light,
     this.fontFamily = 'Latin Modern Roman',
+    this.pageSize,
     super.key,
   });
 
@@ -42,15 +45,81 @@ class DocumentView extends StatelessWidget {
   final String macroPreamble;
   final double zoom;
 
-  /// The preview pane's own color scheme, independent of the app theme.
+  /// The document's color scheme, derived from the app-wide theme; the
+  /// light palette doubles as the export default (black ink on white).
   final PreviewTheme previewTheme;
 
   /// The prose face, chosen by the preview pane's font dropdown. Math
   /// keeps its KaTeX fonts regardless.
   final String fontFamily;
 
+  /// When null (the default), the document renders as one continuous
+  /// scroll. When set, it is paginated into discrete pages of that size.
+  final PageSize? pageSize;
+
+  @override
+  State<DocumentView> createState() => _DocumentViewState();
+}
+
+/// Greedy first-fit pagination: packs [heights] (per-block, in document
+/// order) into pages of [capacity] height, returning the block indexes of
+/// each page. A block taller than a page gets one to itself and overflows
+/// visually (the page card clips it), the way a PDF shows an oversized
+/// figure rather than splitting it.
+List<List<int>> packBlocksIntoPages(List<double> heights, double capacity) {
+  final pages = <List<int>>[];
+  var current = <int>[];
+  var used = 0.0;
+  for (var i = 0; i < heights.length; i++) {
+    if (current.isNotEmpty && used + heights[i] > capacity) {
+      pages.add(current);
+      current = <int>[];
+      used = 0.0;
+    }
+    current.add(i);
+    used += heights[i];
+  }
+  if (current.isNotEmpty) pages.add(current);
+  return pages;
+}
+
+class _DocumentViewState extends State<DocumentView> {
+  // Shadowing getters keep the rendering helpers below written against the
+  // old stateless field names.
+  List<DocBlock> get blocks => widget.blocks;
+  String get macroPreamble => widget.macroPreamble;
+  double get zoom => widget.zoom;
+  String get fontFamily => widget.fontFamily;
+
   double get _bodySize => 16 * zoom;
-  PreviewPalette get _palette => previewPalette(previewTheme);
+  PreviewPalette get _palette => previewPalette(widget.previewTheme);
+
+  /// Pagination results for the current inputs; null while the measurement
+  /// pass has not run (or after an invalidation).
+  List<List<int>>? _pages;
+  List<GlobalKey>? _measureKeys;
+  bool _measurePending = false;
+  Timer? _verifyTimer;
+
+  @override
+  void dispose() {
+    _verifyTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant DocumentView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.blocks != widget.blocks ||
+        oldWidget.macroPreamble != widget.macroPreamble ||
+        oldWidget.zoom != widget.zoom ||
+        oldWidget.previewTheme != widget.previewTheme ||
+        oldWidget.fontFamily != widget.fontFamily ||
+        oldWidget.pageSize != widget.pageSize) {
+      _pages = null;
+      _measureKeys = null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -71,19 +140,6 @@ class DocumentView extends StatelessWidget {
             final canvasPadding = compact
                 ? const EdgeInsets.symmetric(horizontal: 12, vertical: 20)
                 : const EdgeInsets.symmetric(horizontal: 24, vertical: 30);
-            // Zoom is a page-level zoom, like a PDF viewer's: the page
-            // itself (margins included) scales, and once it outgrows the
-            // viewport the canvas scrolls horizontally.
-            final paperPadding = (compact ? 24.0 : 48.0) * zoom;
-            final pageWidth = 760 * zoom;
-            final contentWidth = math.max(
-              constraints.maxWidth,
-              pageWidth + 2 * canvasPadding.left,
-            );
-            final centeredHorizontalPadding = math.max(
-              canvasPadding.left,
-              (contentWidth - pageWidth) / 2,
-            );
             final textStyle = TextStyle(
               color: _palette.ink,
               fontSize: _bodySize,
@@ -98,67 +154,317 @@ class DocumentView extends StatelessWidget {
                       'serif',
                     ],
             );
-            return SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(
-                width: contentWidth,
-                child: CustomScrollView(
-                  slivers: <Widget>[
-                    SliverPadding(
-                      padding: EdgeInsets.fromLTRB(
-                        centeredHorizontalPadding,
-                        canvasPadding.top,
-                        centeredHorizontalPadding,
-                        canvasPadding.bottom,
-                      ),
-                      sliver: DecoratedSliver(
-                        decoration: BoxDecoration(
-                          color: _palette.paper,
-                          borderRadius: BorderRadius.circular(3),
-                          border: Border.all(color: _palette.border),
-                          boxShadow: const <BoxShadow>[
-                            BoxShadow(
-                              color: Color(0x18000000),
-                              blurRadius: 14,
-                              offset: Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        sliver: SliverPadding(
-                          padding: EdgeInsets.all(paperPadding),
-                          sliver: blocks.isEmpty
-                              ? SliverToBoxAdapter(
-                                  child: DefaultTextStyle(
-                                    style: textStyle,
-                                    child: Text(
-                                      'No rendered content',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(color: _palette.dimText),
-                                    ),
-                                  ),
-                                )
-                              : SliverList.builder(
-                                  itemCount: blocks.length,
-                                  itemBuilder: (context, index) =>
-                                      DefaultTextStyle(
-                                        style: textStyle,
-                                        child: _buildBlock(
-                                          context,
-                                          blocks[index],
-                                        ),
-                                      ),
-                                ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
+            final pageSize = widget.pageSize;
+            if (pageSize == null) {
+              return _buildContinuous(
+                constraints,
+                compact,
+                canvasPadding,
+                textStyle,
+              );
+            }
+            return _buildPaged(constraints, canvasPadding, textStyle, pageSize);
           },
         ),
       ),
     );
+  }
+
+  Widget _buildContinuous(
+    BoxConstraints constraints,
+    bool compact,
+    EdgeInsets canvasPadding,
+    TextStyle textStyle,
+  ) {
+    // Zoom is a page-level zoom, like a PDF viewer's: the page itself
+    // (margins included) scales, and once it outgrows the viewport the
+    // canvas scrolls horizontally.
+    final paperPadding = (compact ? 24.0 : 48.0) * zoom;
+    final pageWidth = 760 * zoom;
+    final contentWidth = math.max(
+      constraints.maxWidth,
+      pageWidth + 2 * canvasPadding.left,
+    );
+    final centeredHorizontalPadding = math.max(
+      canvasPadding.left,
+      (contentWidth - pageWidth) / 2,
+    );
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SizedBox(
+        width: contentWidth,
+        child: CustomScrollView(
+          slivers: <Widget>[
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(
+                centeredHorizontalPadding,
+                canvasPadding.top,
+                centeredHorizontalPadding,
+                canvasPadding.bottom,
+              ),
+              sliver: DecoratedSliver(
+                decoration: BoxDecoration(
+                  color: _palette.paper,
+                  borderRadius: BorderRadius.circular(3),
+                  border: Border.all(color: _palette.border),
+                  boxShadow: const <BoxShadow>[
+                    BoxShadow(
+                      color: Color(0x18000000),
+                      blurRadius: 14,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                sliver: SliverPadding(
+                  padding: EdgeInsets.all(paperPadding),
+                  sliver: blocks.isEmpty
+                      ? SliverToBoxAdapter(
+                          child: DefaultTextStyle(
+                            style: textStyle,
+                            child: Text(
+                              'No rendered content',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: _palette.dimText),
+                            ),
+                          ),
+                        )
+                      : SliverList.builder(
+                          itemCount: blocks.length,
+                          itemBuilder: (context, index) => DefaultTextStyle(
+                            style: textStyle,
+                            child: _buildBlock(context, blocks[index]),
+                          ),
+                        ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Discrete fixed-size pages. Flutter has no flow-into-pages primitive,
+  /// so pagination is two-pass: an invisible [Offstage] measure column
+  /// reports each block's rendered height at the page's content width,
+  /// [packBlocksIntoPages] splits greedily, and the pages render as cards.
+  /// The measure column stays in the tree so a re-invalidation (edit, zoom,
+  /// page size) can measure again, and so a delayed verify can catch text
+  /// that re-laid-out once a late-loading font arrived.
+  Widget _buildPaged(
+    BoxConstraints constraints,
+    EdgeInsets canvasPadding,
+    TextStyle textStyle,
+    PageSize pageSize,
+  ) {
+    final pageWidth = pageSize.width * zoom;
+    final pageHeight = pageSize.height * zoom;
+    final paperPadding = 48.0 * zoom;
+    final contentWidth = pageWidth - 2 * paperPadding;
+    final contentHeight = pageHeight - 2 * paperPadding;
+
+    final outerWidth = math.max(
+      constraints.maxWidth,
+      pageWidth + 2 * canvasPadding.left,
+    );
+    final centeredHorizontalPadding = math.max(
+      canvasPadding.left,
+      (outerWidth - pageWidth) / 2,
+    );
+
+    if (blocks.isNotEmpty && _measureKeys == null) {
+      _measureKeys = <GlobalKey>[
+        for (var i = 0; i < blocks.length; i++) GlobalKey(),
+      ];
+      _scheduleMeasurement(contentHeight);
+    }
+    final measureKeys = _measureKeys;
+    final pages = _pages;
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SizedBox(
+        width: outerWidth,
+        // The vertical viewport: the page stack is taller than the window,
+        // so it scrolls like the continuous mode's CustomScrollView.
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: <Widget>[
+            Stack(
+              children: <Widget>[
+                if (measureKeys != null)
+                  Offstage(
+                    // The scroll wrapper hands the measure column unbounded
+                    // height, so every block lays out at its natural size
+                    // (a bare Column would overflow the stack's bound).
+                    child: SingleChildScrollView(
+                      child: SizedBox(
+                        width: contentWidth,
+                        child: DefaultTextStyle(
+                          style: textStyle,
+                          child: Column(
+                            children: <Widget>[
+                              for (var i = 0; i < blocks.length; i++)
+                                Container(
+                                  key: measureKeys[i],
+                                  child: _buildBlock(context, blocks[i]),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    centeredHorizontalPadding,
+                    canvasPadding.top,
+                    centeredHorizontalPadding,
+                    canvasPadding.bottom,
+                  ),
+                  child: blocks.isEmpty
+                      ? SizedBox(
+                          width: pageWidth,
+                          child: DefaultTextStyle(
+                            style: textStyle,
+                            child: Text(
+                              'No rendered content',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: _palette.dimText),
+                            ),
+                          ),
+                        )
+                      : pages == null
+                      ? SizedBox(width: pageWidth, height: pageHeight)
+                      : Column(
+                          children: <Widget>[
+                            for (var p = 0; p < pages.length; p++) ...<Widget>[
+                              if (p > 0) SizedBox(height: 24 * zoom),
+                              _pageCard(
+                                pageWidth,
+                                pageHeight,
+                                paperPadding,
+                                pages[p],
+                                p,
+                                pages.length,
+                                textStyle,
+                              ),
+                            ],
+                          ],
+                        ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pageCard(
+    double pageWidth,
+    double pageHeight,
+    double paperPadding,
+    List<int> blockIndexes,
+    int pageIndex,
+    int pageCount,
+    TextStyle textStyle,
+  ) {
+    return Semantics(
+      container: true,
+      label: 'Page ${pageIndex + 1} of $pageCount',
+      child: Container(
+        width: pageWidth,
+        height: pageHeight,
+        clipBehavior: Clip.hardEdge,
+        decoration: BoxDecoration(
+          color: _palette.paper,
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(color: _palette.border),
+          boxShadow: const <BoxShadow>[
+            BoxShadow(
+              color: Color(0x18000000),
+              blurRadius: 14,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Stack(
+          children: <Widget>[
+            Positioned.fill(
+              child: Padding(
+                padding: EdgeInsets.all(paperPadding),
+                // The blocks sum to at most the content height, but a stray
+                // oversized block must not throw a flex overflow: the scroll
+                // wrapper gives the column unbounded height and clips it
+                // (unscrollable), matching the printed page's hard edge.
+                child: SingleChildScrollView(
+                  physics: const NeverScrollableScrollPhysics(),
+                  child: DefaultTextStyle(
+                    style: textStyle,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        for (final i in blockIndexes)
+                          _buildBlock(context, blocks[i]),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: paperPadding * 0.3,
+              child: ExcludeSemantics(
+                child: Text(
+                  '${pageIndex + 1}',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: _palette.dimText, fontSize: 12 * zoom),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _scheduleMeasurement(double capacity) {
+    if (_measurePending) return;
+    _measurePending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _measurePending = false;
+      if (!mounted || widget.pageSize == null) return;
+      _captureHeights(capacity, scheduleVerify: true);
+    });
+  }
+
+  void _captureHeights(double capacity, {required bool scheduleVerify}) {
+    final keys = _measureKeys;
+    if (keys == null) return;
+    final heights = <double>[
+      for (final key in keys) key.currentContext?.size?.height ?? 0,
+    ];
+    if (heights.any((height) => height <= 0)) {
+      // The measure column has not laid out yet; try again next frame.
+      _scheduleMeasurement(capacity);
+      return;
+    }
+    final pages = packBlocksIntoPages(heights, capacity);
+    setState(() => _pages = pages);
+    if (scheduleVerify) {
+      // Bundled fonts resolve a beat after first paint; silently re-measure
+      // once so pagination follows the final metrics.
+      _verifyTimer?.cancel();
+      _verifyTimer = Timer(const Duration(milliseconds: 600), () {
+        if (!mounted || widget.pageSize == null || _measureKeys == null) {
+          return;
+        }
+        _captureHeights(capacity, scheduleVerify: false);
+      });
+    }
   }
 
   Widget _formula(

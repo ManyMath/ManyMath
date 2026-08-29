@@ -16,6 +16,7 @@ import 'error_panel.dart';
 import 'file_actions_button.dart';
 import 'formula_check.dart';
 import 'latex_document.dart';
+import 'page_setup.dart';
 import 'preview_theme.dart';
 import 'templates.dart';
 import 'tex_files.dart';
@@ -123,6 +124,8 @@ class _EditorPageState extends State<EditorPage>
   String? _engineError;
   String? _saveError;
   double _previewZoom = 1;
+  PreviewLayout _previewLayout = PreviewLayout.continuous;
+  PageSize _pageSize = PageSize.usLetter;
   String _sourceFontFamily = sourceFontFamilies.first;
   String _previewFontFamily = previewFontFamilies.first;
   bool _documentsMinimized = false;
@@ -1055,6 +1058,11 @@ class _EditorPageState extends State<EditorPage>
       previewFont: _previewFontFamily,
       onPreviewFontChanged: (value) =>
           setState(() => _previewFontFamily = value),
+      previewLayout: _previewLayout,
+      pageSize: _pageSize,
+      onPreviewLayoutChanged: (value) =>
+          setState(() => _previewLayout = value),
+      onPageSizeChanged: (value) => setState(() => _pageSize = value),
       engineLoading: _engineLoading,
       engineError: _engineError,
       onRetry: _initializeEngine,
@@ -1276,6 +1284,10 @@ class _PreviewPane extends StatelessWidget {
     required this.previewTheme,
     required this.previewFont,
     required this.onPreviewFontChanged,
+    required this.previewLayout,
+    required this.pageSize,
+    required this.onPreviewLayoutChanged,
+    required this.onPageSizeChanged,
     required this.engineLoading,
     required this.engineError,
     required this.onRetry,
@@ -1294,6 +1306,10 @@ class _PreviewPane extends StatelessWidget {
   final PreviewTheme previewTheme;
   final String previewFont;
   final ValueChanged<String> onPreviewFontChanged;
+  final PreviewLayout previewLayout;
+  final PageSize pageSize;
+  final ValueChanged<PreviewLayout> onPreviewLayoutChanged;
+  final ValueChanged<PageSize> onPageSizeChanged;
   final bool engineLoading;
   final String? engineError;
   final VoidCallback onRetry;
@@ -1317,8 +1333,18 @@ class _PreviewPane extends StatelessWidget {
             color: theme.colors.card,
             child: _PaneHeader(
               title: 'Preview',
-              subtitle: engineLoading ? 'Starting renderer' : 'PDF-style page',
+              subtitle: engineLoading
+                  ? 'Starting renderer'
+                  : previewLayout == PreviewLayout.pages
+                  ? '${pageSize.label} pages'
+                  : 'Continuous scroll',
               actions: <Widget>[
+                _PageSetupMenu(
+                  layout: previewLayout,
+                  pageSize: pageSize,
+                  onLayoutChanged: onPreviewLayoutChanged,
+                  onPageSizeChanged: onPageSizeChanged,
+                ),
                 _PreviewFontMenu(
                   previewFont: previewFont,
                   onChanged: onPreviewFontChanged,
@@ -1371,6 +1397,8 @@ class _PreviewPane extends StatelessWidget {
               zoom: zoom,
               previewTheme: previewTheme,
               previewFont: previewFont,
+              previewLayout: previewLayout,
+              pageSize: pageSize,
               engineLoading: engineLoading,
               engineError: engineError,
               onRetry: onRetry,
@@ -1389,6 +1417,8 @@ class _PreviewContent extends StatefulWidget {
     required this.zoom,
     required this.previewTheme,
     required this.previewFont,
+    required this.previewLayout,
+    required this.pageSize,
     required this.engineLoading,
     required this.engineError,
     required this.onRetry,
@@ -1399,6 +1429,8 @@ class _PreviewContent extends StatefulWidget {
   final double zoom;
   final PreviewTheme previewTheme;
   final String previewFont;
+  final PreviewLayout previewLayout;
+  final PageSize pageSize;
   final bool engineLoading;
   final String? engineError;
   final VoidCallback onRetry;
@@ -1424,6 +1456,8 @@ class _PreviewContentState extends State<_PreviewContent> {
         oldWidget.zoom != widget.zoom ||
         oldWidget.previewTheme != widget.previewTheme ||
         oldWidget.previewFont != widget.previewFont ||
+        oldWidget.previewLayout != widget.previewLayout ||
+        oldWidget.pageSize != widget.pageSize ||
         oldWidget.engineLoading != widget.engineLoading ||
         oldWidget.engineError != widget.engineError) {
       _content = _buildContent(widget);
@@ -1463,6 +1497,9 @@ class _PreviewContentState extends State<_PreviewContent> {
         zoom: preview.zoom,
         previewTheme: preview.previewTheme,
         fontFamily: preview.previewFont,
+        pageSize: preview.previewLayout == PreviewLayout.pages
+            ? preview.pageSize
+            : null,
       ),
     );
   }
@@ -1563,6 +1600,103 @@ class _PreviewFontMenuState extends State<_PreviewFontMenu> {
           child: const Text(
             'Aa',
             style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The preview pane's page setup menu: layout (continuous scroll vs.
+/// discrete pages) and physical page size (shared with printing). Same
+/// compact popover chrome as the neighboring font menu.
+class _PageSetupMenu extends StatefulWidget {
+  const _PageSetupMenu({
+    required this.layout,
+    required this.pageSize,
+    required this.onLayoutChanged,
+    required this.onPageSizeChanged,
+  });
+
+  final PreviewLayout layout;
+  final PageSize pageSize;
+  final ValueChanged<PreviewLayout> onLayoutChanged;
+  final ValueChanged<PageSize> onPageSizeChanged;
+
+  @override
+  State<_PageSetupMenu> createState() => _PageSetupMenuState();
+}
+
+class _PageSetupMenuState extends State<_PageSetupMenu> {
+  final MPopoverController _menu = MPopoverController();
+
+  @override
+  void dispose() {
+    _menu.dispose();
+    super.dispose();
+  }
+
+  Widget _check(bool active) => active
+      ? const MIcon(MIconData.check, size: 15, excludeFromSemantics: true)
+      : const SizedBox(width: 15);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = MTheme.of(context);
+    Widget sectionLabel(String text) => Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(text, style: theme.typography.caption),
+      ),
+    );
+
+    return MPopover(
+      controller: _menu,
+      semanticLabel: 'Page setup',
+      popoverBuilder: (context, close) => SizedBox(
+        width: 190,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            sectionLabel('Layout'),
+            for (final layout in PreviewLayout.values)
+              MListTile(
+                leading: _check(layout == widget.layout),
+                title: Text(layout.label),
+                onTap: () {
+                  close();
+                  widget.onLayoutChanged(layout);
+                },
+              ),
+            const MDivider(),
+            sectionLabel('Page size'),
+            for (final size in PageSize.values)
+              MListTile(
+                leading: _check(size == widget.pageSize),
+                title: Text(size.label),
+                onTap: () {
+                  close();
+                  widget.onPageSizeChanged(size);
+                },
+              ),
+          ],
+        ),
+      ),
+      child: SizedBox.square(
+        dimension: 32,
+        child: MButton(
+          semanticLabel:
+              'Page setup: ${widget.layout.label} layout, '
+              '${widget.pageSize.label}',
+          variant: MButtonVariant.ghost,
+          size: MButtonSize.xs,
+          onPressed: _menu.toggle,
+          style: const MButtonStyleDelta(minHeight: 32, padding: EdgeInsets.zero),
+          child: const MIcon(
+            MIconData.fileText,
+            size: 16,
+            excludeFromSemantics: true,
           ),
         ),
       ),
