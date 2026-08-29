@@ -1,4 +1,3 @@
-import 'papers/fcmpp_implementation_audit.dart';
 import 'papers/frostlass_code_audit.dart';
 import 'papers/frostlass_thresholdization.dart';
 import 'papers/rage_audit.dart';
@@ -24,10 +23,6 @@ const papers = <PaperDocument>[
         'FROSTLASS: Flexible Ring-Oriented Schnorr-like Thresholdized '
         'Linkably Anonymous Signature Scheme',
     source: frostlassThresholdizationSource,
-  ),
-  PaperDocument(
-    name: 'FCMP++ Crosswalk: Audit Locator Key',
-    source: fcmppImplementationAuditSource,
   ),
   PaperDocument(
     name: 'Serai Monero Networks Audit',
