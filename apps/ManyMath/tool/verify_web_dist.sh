@@ -131,7 +131,10 @@ if [[ "$preview_magic" != "89504e470d0a1a0a" ]]; then
   echo "served assets/hero-theme-light.png is not a valid PNG image" >&2
   exit 1
 fi
-if grep -Eiq '<!doctype html|<html' "$download_dir/main.dart.js"; then
+# The bundle legitimately embeds HTML template strings (the print
+# document), so only the response head can be checked for a served HTML
+# fallback.
+if head -c 256 "$download_dir/main.dart.js" | grep -Eiq '<!doctype html|<html'; then
   echo "/edit/main.dart.js returned HTML" >&2
   exit 1
 fi

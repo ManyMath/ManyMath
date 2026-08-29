@@ -18,6 +18,8 @@ import 'formula_check.dart';
 import 'latex_document.dart';
 import 'page_setup.dart';
 import 'preview_theme.dart';
+import 'print.dart';
+import 'print_document.dart';
 import 'templates.dart';
 import 'tex_files.dart';
 import 'theme.dart';
@@ -121,6 +123,7 @@ class _EditorPageState extends State<EditorPage>
   bool _documentsVisible = true;
   bool _problemsExpanded = false;
   bool _saving = false;
+  bool _printing = false;
   String? _engineError;
   String? _saveError;
   double _previewZoom = 1;
@@ -542,6 +545,47 @@ class _EditorPageState extends State<EditorPage>
     }
   }
 
+  Future<void> _printDocument() async {
+    if (_printing) return;
+    if (!kIsWeb) {
+      showMToast(
+        context,
+        semanticLabel: 'Print unavailable',
+        builder: (_) => const Text('Printing is available in the web app'),
+      );
+      return;
+    }
+    setState(() => _printing = true);
+    try {
+      final formulaSvgs = await renderFormulaSvgs(_blocks, _macroPreamble);
+      final html = buildPrintHtml(
+        title: _document.name,
+        blocks: _blocks,
+        pageSize: _pageSize,
+        formulaSvgs: formulaSvgs,
+        fontBaseUrl: Uri.base.resolve('assets/fonts/').toString(),
+      );
+      openPrintWindow(html);
+      if (!mounted) return;
+      showMToast(
+        context,
+        semanticLabel: 'Print window opened',
+        builder: (_) => const Text(
+          'Print window opened — use the browser dialog to print or save as PDF',
+        ),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      showMToast(
+        context,
+        semanticLabel: 'Print failed',
+        builder: (_) => Text('Could not prepare print: $error'),
+      );
+    } finally {
+      if (mounted) setState(() => _printing = false);
+    }
+  }
+
   Future<void> _showDocuments() async {
     final viewport = MediaQuery.sizeOf(context);
     if (viewport.width >= documentBrowserBreakpoint) {
@@ -732,6 +776,7 @@ class _EditorPageState extends State<EditorPage>
                     _handleDocumentAction(_document, DocumentAction.duplicate),
                 onImport: _importTex,
                 onExport: _exportTex,
+                onPrint: _printDocument,
                 onCopy: _copySource,
                 onAbout: _showAbout,
               ),
@@ -1117,6 +1162,7 @@ class _FileMenu extends StatefulWidget {
     required this.onDuplicate,
     required this.onImport,
     required this.onExport,
+    required this.onPrint,
     required this.onCopy,
     required this.onAbout,
   });
@@ -1126,6 +1172,7 @@ class _FileMenu extends StatefulWidget {
   final VoidCallback onDuplicate;
   final VoidCallback onImport;
   final VoidCallback onExport;
+  final VoidCallback onPrint;
   final VoidCallback onCopy;
   final VoidCallback onAbout;
 
@@ -1158,6 +1205,7 @@ class _FileMenuState extends State<_FileMenu> {
             _item('Duplicate', MIconData.copy, widget.onDuplicate, close),
             _item('Import .tex', MIconData.folder, widget.onImport, close),
             _item('Export .tex', MIconData.fileText, widget.onExport, close),
+            _item('Print / PDF…', MIconData.fileText, widget.onPrint, close),
             _item('Copy source', MIconData.copy, widget.onCopy, close),
             const MDivider(),
             _item('About ManyMath', MIconData.info, widget.onAbout, close),
