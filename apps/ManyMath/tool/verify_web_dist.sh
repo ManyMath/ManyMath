@@ -36,6 +36,15 @@ required_files=(
   index.html
   404.html
   assets/site.css
+  assets/brand/fonts/inter/OFL.txt
+  assets/brand/fonts/inter/PROVENANCE.json
+  assets/brand/fonts/jetbrains-mono/OFL.txt
+  assets/brand/fonts/jetbrains-mono/PROVENANCE.json
+  assets/brand/tokens/manymath-brand.css
+  assets/brand/tokens/fonts.css
+  assets/brand/tokens/fallbacks.css
+  assets/brand/fonts/latinmodern/lmroman10-regular.woff2
+  assets/brand/fonts/inter/inter-var.woff2
   assets/brand/marks/manymath.svg
   assets/brand/og.png
   assets/hero-theme-light.png
@@ -53,6 +62,8 @@ for relative_path in "${required_files[@]}"; do
     exit 1
   }
 done
+
+python3 "$script_dir/verify_font_notices.py" "$dist_dir/assets/brand/fonts"
 
 grep -Fq '<meta name="robots" content="noindex">' "$dist_dir/404.html" || {
   echo "distribution 404 page must be excluded from indexing" >&2

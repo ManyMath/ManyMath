@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.manymath" "\0"
-            VALUE "FileDescription", "manymath" "\0"
+            VALUE "CompanyName", "ManyMath LLC" "\0"
+            VALUE "FileDescription", "ManyMath Editor" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "manymath" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.manymath. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Joshua Babb and ManyMath LLC" "\0"
             VALUE "OriginalFilename", "manymath.exe" "\0"
-            VALUE "ProductName", "manymath" "\0"
+            VALUE "ProductName", "ManyMath Editor" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

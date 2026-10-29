@@ -85,6 +85,60 @@ Text after \[ \sqrt{2} \] and beyond.
       expect(math.latex, endsWith(r'\end{align}'));
     });
 
+    test('rewrites display environments RaTeX does not lay out', () {
+      const source = r'''
+\begin{multline}
+a + b \\
++ c
+\end{multline}
+\begin{eqnarray*}
+x & = & \frac{1}{2} \\
+y & \le & \begin{cases} 1 & z \end{cases}
+\end{eqnarray*}
+\begin{flalign}
+p &= q
+\end{flalign}
+''';
+      final maths = parseLatexDocument(
+        source,
+      ).whereType<DisplayMathBlock>().toList();
+      expect(maths.map((m) => m.latex), [
+        '\\begin{equation}\\begin{gathered}\na + b \\\\\n+ c\n'
+            '\\end{gathered}\\end{equation}',
+        '\\begin{align*}\nx & =  \\frac{1}{2} \\\\\n'
+            'y & \\le  \\begin{cases} 1 & z \\end{cases}\n\\end{align*}',
+        '\\begin{align}\np &= q\n\\end{align}',
+      ]);
+      for (final math in maths) {
+        final map = math.latexSourceMap!;
+        expect(map, hasLength(math.latex.length));
+        // Copied text still maps to itself in the source.
+        final body = math.latex.indexOf('\n') + 1;
+        expect(source[map[body]], math.latex[body]);
+      }
+      final eqnarray = maths[1];
+      final half = eqnarray.latex.indexOf(r'\frac');
+      expect(
+        source.substring(
+          eqnarray.latexSourceMap![half],
+          eqnarray.latexSourceMap![half] + 5,
+        ),
+        r'\frac',
+      );
+    });
+
+    test('subequations adds nothing around its display math', () {
+      final blocks = parseLatexDocument(
+        '\\begin{subequations}\n\\begin{align}\na &= b\n\\end{align}\n'
+        '\\end{subequations}',
+      );
+      expect(blocks.single, isA<DisplayMathBlock>());
+      expect(
+        inlinesOf(blocks).whereType<TextRun>().map((s) => s.text).join(),
+        isEmpty,
+      );
+    });
+
     test('captures lstlisting as a verbatim CodeBlock', () {
       final blocks = parseLatexDocument(r'''
 \begin{lstlisting}[language=Rust, caption=Demo]
@@ -221,6 +275,59 @@ See \cref{res:shared}.
       expect(crefText, contains('conjecture 1.2'));
     });
 
+    test(r'\newtheorem* environments are unnumbered', () {
+      final blocks = parseLatexDocument(r'''
+\newtheorem*{remark}{Remark}
+\newtheorem{claim}{Claim}
+\begin{document}
+\begin{remark}aside\end{remark}
+\begin{claim}\label{cl:one}counted\end{claim}
+\Cref{cl:one}
+\end{document}
+''');
+      final theorems = blocks.whereType<TheoremBlock>().toList();
+      expect(theorems.map((t) => t.noun), ['Remark', 'Claim']);
+      expect(theorems.map((t) => t.number), [null, '1']);
+      final refText = inlinesOf([
+        blocks.last,
+      ]).whereType<TextRun>().map((s) => s.text).join();
+      expect(refText, contains('Claim 1'));
+    });
+
+    test('starred sections do not step the section counters', () {
+      final blocks = parseLatexDocument(r'''
+\newtheorem{claim}{Claim}[section]
+\begin{document}
+\section*{Introduction}
+\section{First}\label{sec:first}
+\begin{claim}in the first numbered section\end{claim}
+\subsection*{Unnumbered}
+\subsection{Numbered}\label{sec:sub}
+\ref{sec:first} and \ref{sec:sub}
+\end{document}
+''');
+      expect(blocks.whereType<HeadingBlock>(), hasLength(4));
+      expect(blocks.whereType<TheoremBlock>().single.number, '1.1');
+      final refText = inlinesOf([
+        blocks.last,
+      ]).whereType<TextRun>().map((s) => s.text).join();
+      expect(refText, contains('1 and 1.1'));
+    });
+
+    test(r'\Cref of a theorem whose noun is blank does not throw', () {
+      final blocks = parseLatexDocument(r'''
+\newtheorem{foo}{ }
+\begin{document}
+\begin{foo}\label{x}body\end{foo}
+\Cref{x}
+\end{document}
+''');
+      final refText = inlinesOf([
+        blocks.last,
+      ]).whereType<TextRun>().map((s) => s.text).join();
+      expect(refText, contains('1'));
+    });
+
     test('an unlabeled theorem still shifts later numbers, like LaTeX', () {
       final blocks = parseLatexDocument(r'''
 \begin{document}
@@ -297,6 +404,30 @@ Ignored trailer.
       expect(math.sourceEnd, constructStart + r'$x+\oops$'.length);
     });
 
+    test('title metadata expands the document macros like the body', () {
+      final title = parseLatexDocument(r'''
+\newcommand{\Product}{ManyMath}
+\title{\Product{} Notes on $x$}
+\author{The \Product{} team}
+\begin{document}\maketitle\end{document}
+''').whereType<TitleBlock>().single;
+      String text(List<DocInline>? spans) =>
+          spans!.whereType<TextRun>().map((s) => s.text).join();
+      expect(text(title.titleInlines), 'ManyMath Notes on ');
+      expect(title.titleInlines!.whereType<InlineMath>().single.latex, 'x');
+      expect(text(title.authorInlines), 'The ManyMath team');
+      expect(title.dateInlines, isNull);
+      expect(title.metadataInlines, hasLength(2));
+    });
+
+    test('title metadata spans keep their source offsets', () {
+      const source =
+          '\\title{Plain \$y\$}\\begin{document}\\maketitle\\end{document}';
+      final title = parseLatexDocument(source).whereType<TitleBlock>().single;
+      final math = title.titleInlines!.whereType<InlineMath>().single;
+      expect(math.sourceStart, source.indexOf(r'$y$'));
+    });
+
     test('FROSTLASS paper lists all six authors', () {
       final title = parseLatexDocument(
         frostlassThresholdizationSource,
@@ -311,6 +442,28 @@ Ignored trailer.
       ]) {
         expect(title.author, contains(name));
       }
+    });
+
+    test('a short title option keeps the full heading and its number', () {
+      final blocks = parseLatexDocument(r'''
+\begin{document}
+\section[subtle]{A subtle long title}\label{sec:a}
+\subsection [Short] {Second level}
+See \ref{sec:a}.
+\end{document}
+''');
+      final headings = blocks.whereType<HeadingBlock>().toList();
+      expect(headings.map((h) => h.level), [1, 2]);
+      expect(
+        headings.map(
+          (h) => h.spans.whereType<TextRun>().map((s) => s.text).join(),
+        ),
+        ['A subtle long title', 'Second level'],
+      );
+      final refText = inlinesOf([
+        blocks.last,
+      ]).whereType<TextRun>().map((s) => s.text).join();
+      expect(refText, contains('See 1.'));
     });
 
     test('parses sections with levels', () {
@@ -441,6 +594,52 @@ Outputs \verifyIO here.
           .join();
       expect(text, isNot(contains('gone')));
       expect(text, contains('50% of it'));
+    });
+
+    test('a %-joined line drops its indentation, as TeX does', () {
+      const source = 'foo%\n    bar and x%\n\t  \$y\$';
+      final paragraph = parseLatexDocument(source).single as ParagraphBlock;
+      final text = paragraph.spans
+          .whereType<TextRun>()
+          .map((s) => s.text)
+          .join();
+      expect(text, 'foobar and x');
+      expect(
+        paragraph.spans.whereType<InlineMath>().single.sourceStart,
+        source.indexOf(r'$y$'),
+      );
+    });
+
+    test('a commented-out verbatim begin does not disable comments', () {
+      final blocks = parseLatexDocument(
+        '% \\begin{lstlisting}\nvisible % hidden\n% whole line\nmore',
+      );
+      final text = inlinesOf(
+        blocks,
+      ).whereType<TextRun>().map((span) => span.text).join();
+      expect(text, contains('visible'));
+      expect(text, contains('more'));
+      expect(text, isNot(contains('hidden')));
+      expect(text, isNot(contains('whole line')));
+    });
+
+    test('a one-line verbatim environment does not disable comments', () {
+      final blocks = parseLatexDocument(
+        '\\begin{verbatim}x % kept\\end{verbatim}\nafter % gone',
+      );
+      final text = inlinesOf(
+        blocks,
+      ).whereType<TextRun>().map((span) => span.text).join();
+      expect(text, contains('after'));
+      expect(text, isNot(contains('gone')));
+    });
+
+    test(r'a percent sign inside \verb is not a comment', () {
+      final blocks = parseLatexDocument(r'use \verb|50%| here and more');
+      final text = inlinesOf(
+        blocks,
+      ).whereType<TextRun>().map((span) => span.text).join();
+      expect(text, contains('here and more'));
     });
 
     test('an inline comment consumes its newline', () {
@@ -803,6 +1002,24 @@ Outputs \verifyIO here.
       expect(math.sourceEnd, source.indexOf(r'\)') + 2);
     });
 
+    test('inline math beside references keeps exact spans', () {
+      const source = r'''
+\begin{document}
+\section{A}\label{sec:a}
+By \cite{k} and \ref{sec:a}\label{x}, $y^2$ holds; \cref{sec:a} too.
+\begin{thebibliography}{9}
+\bibitem{k} Someone. 2020.
+\end{thebibliography}
+\end{document}
+''';
+      final paragraph = parseLatexDocument(
+        source,
+      ).whereType<ParagraphBlock>().first;
+      final math = paragraph.spans.whereType<InlineMath>().single;
+      expect(math.sourceStart, source.indexOf(r'$y^2$'));
+      expect(math.sourceEnd, source.indexOf(r'$y^2$') + r'$y^2$'.length);
+    });
+
     test('parseInline without a sourceMap yields null spans', () {
       final math = parseInline(r'has $x$').whereType<InlineMath>().single;
       expect(math.sourceStart, isNull);
@@ -850,6 +1067,37 @@ Three plain words here $x$ and $$y$$
       );
       expect(nested.bold, isTrue);
       expect(nested.italic, isTrue);
+    });
+
+    test('face and family switches keep their text', () {
+      final spans = parseInline(
+        r'A \textsc{Nist} and \mbox{y z} in \textrm{roman} \textsf{sans}.',
+      );
+      final text = spans.whereType<TextRun>().map((s) => s.text).join();
+      expect(text, 'A Nist and y z in roman sans.');
+    });
+
+    test(r'\bibliography is dropped like \bibliographystyle', () {
+      final spans = parseInline(
+        r'Text. \bibliographystyle{plain}\bibliography{refs}',
+      );
+      final text = spans.whereType<TextRun>().map((s) => s.text).join();
+      expect(text.trim(), 'Text.');
+    });
+
+    test(
+      'a command without arguments does not swallow a following bracket',
+      () {
+        final spans = parseInline(r'\noindent [0,1] is an interval');
+        final text = spans.whereType<TextRun>().map((s) => s.text).join();
+        expect(text.trim(), '[0,1] is an interval');
+      },
+    );
+
+    test('an accent over an astral character keeps the pair whole', () {
+      final spans = parseInline("\\'{\u{1D44E}}x");
+      final text = spans.whereType<TextRun>().map((s) => s.text).join();
+      expect(text, '\u{1D44E}\u0301x');
     });
 
     test(r'handles \( \) inline math and line breaks', () {
@@ -983,6 +1231,21 @@ Three plain words here $x$ and $$y$$
 ''');
     });
 
+    test('defines \\DeclareMathOperator macros as operator names', () {
+      final preamble = extractMacroPreamble(r'''
+\newcommand{\Fq}{\mathbb{F}_q}
+\DeclareMathOperator{\negl}{negl}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator \Tr {Tr}
+''');
+      expect(preamble, r'''
+\providecommand{\Fq}{\mathbb{F}_q}
+\providecommand{\negl}{\operatorname{negl}}
+\providecommand{\argmax}{\operatorname*{arg\,max}}
+\providecommand{\Tr}{\operatorname{Tr}}
+''');
+    });
+
     test('keeps \\def as-is, including its parameter text', () {
       final preamble = extractMacroPreamble(r'\def\foo#1#2{#1 + #2}');
       expect(
@@ -1057,6 +1320,36 @@ See \ref{sec:beta} and \cref{sec:beta} and \Cref{sec:beta}.
           .map((s) => s.text)
           .join();
       expect(text, contains('See 1.1 and section 1.1 and Section 1.1.'));
+    });
+
+    test(r'\cref lists, \autoref, \pageref and cite notes', () {
+      final blocks = parseLatexDocument(r'''
+\begin{document}
+\section{Alpha}\label{sec:a}
+\begin{theorem}\label{thm:one}One.\end{theorem}
+\begin{theorem}\label{thm:two}Two.\end{theorem}
+\begin{lemma}\label{lem:three}Three.\end{lemma}
+By \cref{thm:one,thm:two}, \Cref{thm:one,lem:three}, \autoref{sec:a} and
+\cref{thm:one,missing}; see page \pageref{thm:one} and \cite[p.~3]{k},
+\citep[see][Thm.~2]{k}, \citet{k}.
+\begin{thebibliography}{9}
+\bibitem{k} Someone. Something. 2020.
+\end{thebibliography}
+\end{document}
+''');
+      final text = blocks
+          .whereType<ParagraphBlock>()
+          .map((p) => p.spans.whereType<TextRun>().map((s) => s.text).join())
+          .join(' ');
+      expect(text, contains('theorems 1 and 2'));
+      expect(text, contains('Theorem 1 and Lemma 1'));
+      expect(text, contains('Section 1 and'));
+      expect(text, contains('theorem 1 and ??'));
+      expect(text, contains('see page ??'));
+      expect(text, contains('[1, p. 3]'));
+      expect(text, contains('[see 1, Thm. 2]'));
+      expect(text, contains('[1].'));
+      expect(text, isNot(contains(r'\')));
     });
 
     test(r'an unresolved \ref renders as ??, matching LaTeX', () {
@@ -1155,5 +1448,277 @@ See \cite{nonexistent}.
           .join();
       expect(text, contains('[?]'));
     });
+  });
+
+  group('Distributed Proofreaders / Project Gutenberg conventions', () {
+    test(
+      r'\DPtypo, \DPchg, \DPmod, \DPnote, \Pagelabel, \First, \Inum normalize in prose and preserve formula source maps',
+      () {
+        const source =
+            r'\First{W}e have \DPtypo{teh}{the} \DPchg{old}{new} '
+            r'\DPmod{v1}{v2}\DPnote{check scan}\Pagelabel{p42}'
+            r'\DPPageSep{042.png}{42} item \Inum{1.} with $x^2 + 1$ here.';
+        final blocks = parseLatexDocument(source);
+        final para = blocks.single as ParagraphBlock;
+        final text = para.spans.whereType<TextRun>().map((s) => s.text).join();
+        expect(text, 'We have the new v2 item 1. with  here.');
+        expect(text, isNot(contains('DP')));
+        expect(text, isNot(contains('teh')));
+        expect(text, isNot(contains('p42')));
+
+        final math = para.spans.whereType<InlineMath>().single;
+        expect(math.latex, 'x^2 + 1');
+        expect(math.sourceStart, source.indexOf(r'$x^2 + 1$'));
+        expect(
+          math.sourceEnd,
+          source.indexOf(r'$x^2 + 1$') + r'$x^2 + 1$'.length,
+        );
+        expect(math.latexSourceMap, hasLength(math.latex.length));
+        expect(math.latexSourceMap!.first, source.indexOf('x^2 + 1'));
+      },
+    );
+
+    test(
+      r'\efrac, \ds, \sqrtp, \DELTA, \EPSILON, \Par, and \DPtypo normalize inside inline and display math',
+      () {
+        const source = r'''
+Inline $\efrac{1}{2} + \ds\int_0^1 \DPtypo{x^3}{x^2}\,dx + \sqrtp[3]{y} + \DELTA x + \EPSILON + \Par{a+b}$ and display:
+\[
+\efrac{dy}{dx} = \ds\lim_{\DELTA x \to 0} \DPchg{\frac{y}{x}}{\frac{\DELTA y}{\DELTA x}}
+\]
+''';
+        final blocks = parseLatexDocument(source);
+        final para = blocks.whereType<ParagraphBlock>().single;
+        final inlineMath = para.spans.whereType<InlineMath>().single;
+        expect(
+          inlineMath.latex,
+          r'\frac{1}{2} + \displaystyle\int_0^1 x^2\,dx + \sqrt[3]{y} + \epsilon x + \delta + (a+b)',
+        );
+        expect(inlineMath.latexSourceMap, hasLength(inlineMath.latex.length));
+        // The kept 'x^2' inside \DPtypo{x^3}{x^2} maps to the second argument's offset.
+        final x2Idx = inlineMath.latex.indexOf('x^2');
+        expect(inlineMath.latexSourceMap![x2Idx], source.indexOf('x^2'));
+
+        final display = blocks.whereType<DisplayMathBlock>().single;
+        expect(
+          display.latex,
+          r'\frac{dy}{dx} = \displaystyle\lim_{\epsilon x \to 0} \frac{\epsilon y}{\epsilon x}',
+        );
+        expect(display.latexSourceMap, hasLength(display.latex.length));
+      },
+    );
+
+    test(
+      'DPalign* and DPgather* rewrite to align* and gather* and normalize lintertext, rintertext, intertext, Tag, and displaybreak',
+      () {
+        const source = r'''
+\begin{DPalign*}[m]
+y + dy &= (x + dx)^2 \displaybreak[1] \\
+\intertext{\indent Now $y = x^2$; subtracting leaves}
+dy &= 2x \cdot dx + (dx)^2, \\
+\lintertext{and}
+\efrac{dy}{dx} &= 2x \Tag{(1)}
+\end{DPalign*}
+\begin{DPgather*}[a]
+\ds\int x^n\,dx = \frac{x^{n+1}}{n+1} + C \\
+\lintertext{\rlap{So also}}
+\ds\int x^{-1}\,dx = \log x + C
+\end{DPgather*}
+''';
+        final blocks = parseLatexDocument(source);
+        final displays = blocks.whereType<DisplayMathBlock>().toList();
+        expect(displays, hasLength(2));
+
+        final alignLatex = displays[0].latex;
+        expect(alignLatex, startsWith(r'\begin{align*}'));
+        expect(alignLatex, endsWith(r'\end{align*}'));
+        expect(alignLatex, isNot(contains('DPalign')));
+        expect(alignLatex, isNot(contains('[m]')));
+        expect(alignLatex, isNot(contains('displaybreak')));
+        expect(alignLatex, isNot(contains(r'\lintertext')));
+        expect(alignLatex, isNot(contains(r'\intertext')));
+        expect(alignLatex, isNot(contains(r'\Tag')));
+        expect(alignLatex, isNot(contains(r'$')));
+        expect(
+          alignLatex,
+          contains(r'\text{Now }y = x^2\text{; subtracting leaves} \\'),
+        );
+        expect(alignLatex, contains(r'\text{and}\quad '));
+        expect(alignLatex, contains(r'\frac{dy}{dx} &= 2x \quad\text{(1)}'));
+        expect(displays[0].latexSourceMap, hasLength(alignLatex.length));
+
+        final gatherLatex = displays[1].latex;
+        expect(gatherLatex, startsWith(r'\begin{gather*}'));
+        expect(gatherLatex, endsWith(r'\end{gather*}'));
+        expect(gatherLatex, isNot(contains('DPgather')));
+        expect(gatherLatex, isNot(contains(r'\rlap')));
+        expect(gatherLatex, contains(r'\text{So also}\quad '));
+        expect(displays[1].latexSourceMap, hasLength(gatherLatex.length));
+      },
+    );
+
+    test(
+      'Thompson Calculus Made Easy excerpt parses chapters, DPalign*, exercises, and DP notes cleanly',
+      () {
+        const source = r'''
+\Chapter{IV.}{Simplest Cases.}
+\First{N}ow let us see how, on first principles, we can differentiate some simple algebraical expression.\Pagelabel{chap4}
+\DPPageSep{029.png}{17}%
+Let us begin with the simple expression $y=x^2$.
+\begin{align*}
+y + dy &= (x + dx)^2.
+\intertext{\indent Doing the squaring we get:}
+y + dy &= x^2 + 2x \cdot dx + (dx)^2.
+\end{align*}
+\Note{Note to Chapter IV.}
+Try to differentiate $\efrac{1}{x^2}$ using \DPtypo{teh}{the} same rule.
+\Exercises{III}
+\Item{1.} Differentiate $y = x^5$.
+''';
+        final blocks = parseLatexDocument(source);
+        final headings = blocks.whereType<HeadingBlock>().toList();
+        expect(headings, hasLength(3));
+        expect(
+          headings[0].spans.whereType<TextRun>().map((s) => s.text).join(),
+          'Chapter IV.: Simplest Cases.',
+        );
+        expect(
+          headings[1].spans.whereType<TextRun>().map((s) => s.text).join(),
+          'Note to Chapter IV.',
+        );
+        expect(
+          headings[2].spans.whereType<TextRun>().map((s) => s.text).join(),
+          'Exercises III',
+        );
+
+        final display = blocks.whereType<DisplayMathBlock>().single;
+        expect(
+          display.latex,
+          contains(r'\\ \text{Doing the squaring we get:} \\'),
+        );
+        expect(display.latexSourceMap, hasLength(display.latex.length));
+      },
+    );
+
+    test(
+      'Hardy Course of Pure Mathematics excerpt parses Section, Theorem, Examples, and Modernize conditionals',
+      () {
+        const source = r'''
+\ifthenelse{\boolean{Modernize}}{%
+  \newcommand{\DELTA}{\delta}%
+  \newcommand{\DPchg}[2]{#2}%
+}{%
+  \newcommand{\DELTA}{\Delta}%
+  \newcommand{\DPchg}[2]{#1}%
+}
+\begin{document}
+\Section[Limits of Functions]{Limits of Functions of a Continuous Variable.}
+\begin{Theorem}
+If $\phi(x) \to A$ as $x \to a$, so that $|\phi(x) - A| < \EPSILON$ whenever $0 < |x - a| \le \DELTA$, then the limit is unique.
+\end{Theorem}
+\begin{Examples}{X.}
+\Item{1.} Prove that $\lim_{x \to 0} \DPchg{\frac{\Sin x}{x}}{\frac{\sin x}{x}} = 1$.
+\end{Examples}
+\end{document}
+''';
+        final preamble = extractMacroPreamble(source);
+        expect(preamble, isNot(contains('ifthenelse')));
+        expect(preamble, isNot(contains('DPchg')));
+
+        final blocks = parseLatexDocument(source);
+        expect(blocks.whereType<HeadingBlock>(), hasLength(2));
+        final thm = blocks.whereType<TheoremBlock>().single;
+        expect(thm.noun, 'Theorem');
+        final thmPara = thm.body.whereType<ParagraphBlock>().single;
+        final thmMath = thmPara.spans.whereType<InlineMath>().toList();
+        expect(thmMath[2].latex, r'|\phi(x) - A| < \delta');
+        expect(thmMath[3].latex, r'0 < |x - a| \le \epsilon');
+
+        final lastPara = blocks.whereType<ParagraphBlock>().last;
+        final exMath = lastPara.spans.whereType<InlineMath>().single;
+        expect(exMath.latex, r'\lim_{x \to 0} \frac{\sin x}{x} = 1');
+      },
+    );
+
+    test(
+      "Euclid's Elements excerpt parses \\mybook, \\myprop, \\mypropl, and \\begin{Defn}",
+      () {
+        const source = r'''
+\mybook{I}{The First Book of the Elements.}
+\begin{Defn}
+\Item{1.} A \Defn{point} is that which has no part.
+\end{Defn}
+\myprop{PROPOSITION}{1.}{On a given finite straight line to construct an equilateral triangle.}{fig01}
+\mypropl{PROPOSITION}{47.}{prop47}{In right-angled triangles the square on the side subtending the right angle is equal to the squares on the sides containing the right angle.}{fig47}
+''';
+        final blocks = parseLatexDocument(source);
+        final bookHeading = blocks.whereType<HeadingBlock>().single;
+        expect(
+          bookHeading.spans.whereType<TextRun>().map((s) => s.text).join(),
+          'Book I: The First Book of the Elements.',
+        );
+
+        final theorems = blocks.whereType<TheoremBlock>().toList();
+        expect(theorems, hasLength(3));
+        expect(theorems[0].noun, 'Definition');
+        expect(theorems[1].noun, 'Proposition');
+        expect(theorems[1].number, '1');
+        expect(theorems[2].noun, 'Proposition');
+        expect(theorems[2].number, '47');
+        final pythagorasText = theorems[2].body
+            .whereType<ParagraphBlock>()
+            .single
+            .spans
+            .whereType<TextRun>()
+            .map((s) => s.text)
+            .join();
+        expect(
+          pythagorasText,
+          contains('square on the side subtending the right angle'),
+        );
+      },
+    );
+
+    test(
+      'Wentworth Algebra excerpt parses ParTheorem, Problems, Soln, and Answers environments',
+      () {
+        const source = r'''
+\begin{ParTheorem}{Rule for Addition.}
+To add two algebraic numbers with like signs, add their absolute values.
+\end{ParTheorem}
+\begin{Soln}
+In $\sqrtp[3]{8x^3} + \Par{2x - 1}$, simplify each term.
+\end{Soln}
+\begin{Problems}[2]
+\Item{1.} Simplify $3x + 5x$.
+\end{Problems}
+\begin{Answers}[2]{12}{Addition of Monomials}{}
+\Ans{1.} $8x$.
+\end{Answers}
+''';
+        final blocks = parseLatexDocument(source);
+        final theorems = blocks.whereType<TheoremBlock>().toList();
+        expect(theorems, hasLength(2));
+        expect(theorems[0].noun, 'Theorem');
+        expect(
+          theorems[0].title!.whereType<TextRun>().map((s) => s.text).join(),
+          'Rule for Addition.',
+        );
+        expect(theorems[1].noun, 'Solution');
+        final solnMath = theorems[1].body
+            .whereType<ParagraphBlock>()
+            .single
+            .spans
+            .whereType<InlineMath>()
+            .single;
+        expect(solnMath.latex, r'\sqrt[3]{8x^3} + (2x - 1)');
+
+        final answerHeading = blocks.whereType<HeadingBlock>().single;
+        expect(
+          answerHeading.spans.whereType<TextRun>().map((s) => s.text).join(),
+          'Exercise 12 — Addition of Monomials',
+        );
+      },
+    );
   });
 }

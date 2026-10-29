@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart';
-import 'package:ratex_flutter/ratex_flutter.dart';
+import 'package:ratex/ratex.dart';
 
 import 'latex_document.dart';
 
@@ -129,17 +129,7 @@ List<FormulaIssue> checkFormulas(
         case ListBlock():
           block.items.forEach(checkBlocks);
         case TitleBlock():
-          for (final metadata in <({String? value, List<int>? sourceMap})>[
-            (value: block.title, sourceMap: block.titleSourceMap),
-            (value: block.author, sourceMap: block.authorSourceMap),
-            (value: block.date, sourceMap: block.dateSourceMap),
-          ]) {
-            if (metadata.value != null) {
-              checkInlines(
-                parseInline(metadata.value!, sourceMap: metadata.sourceMap),
-              );
-            }
-          }
+          block.metadataInlines.forEach(checkInlines);
         case BibliographyBlock():
           for (final entry in block.entries) {
             checkInlines(entry.spans);

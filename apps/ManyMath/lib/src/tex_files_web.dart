@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:js_interop';
 
 import 'package:file_selector/file_selector.dart';
@@ -21,7 +22,9 @@ Future<String?> saveTexFile(
     anchor.click();
     anchor.remove();
   } finally {
-    web.URL.revokeObjectURL(url);
+    // Safari and older Firefox abort a download whose object URL is revoked
+    // before the navigation starts; give the click a moment.
+    Timer(const Duration(seconds: 1), () => web.URL.revokeObjectURL(url));
   }
   return fileName;
 }

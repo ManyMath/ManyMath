@@ -1,0 +1,80 @@
+name: ManyMath CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  analyze-test:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/ManyMath/ManyMath
+    steps:
+      - name: Checkout ManyMath
+        uses: actions/checkout@v4
+        with:
+          path: src/ManyMath/ManyMath
+      - name: Checkout sibling repositories
+        env:
+          FORGE_TOKEN: ${{ secrets.MANYMATH_FORGE_TOKEN }}
+        run: ./tool/ci_checkout_siblings.sh ../..
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/ManyMath/ratex/packages/ratex/rust
+      - name: Resolve dependencies
+        run: flutter pub get
+      - name: Check generated compat macros are up to date
+        working-directory: src/ManyMath/ManyMath/apps/ManyMath
+        run: dart run tool/gen_compat_macros.dart --check
+      - name: Check formatting
+        run: >-
+          dart format --output none --set-exit-if-changed
+          apps/ManyMath/lib apps/ManyMath/test
+      - name: Analyze
+        run: flutter analyze apps/ManyMath
+      - name: Build the native engine for tests
+        run: cargo build --manifest-path ../ratex/packages/ratex/rust/Cargo.toml
+      - name: Test
+        run: flutter test apps/ManyMath/test
+
+  web-release:
+    name: Build web release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/ManyMath/ManyMath
+    steps:
+      - name: Checkout ManyMath
+        uses: actions/checkout@v4
+        with:
+          path: src/ManyMath/ManyMath
+      - name: Checkout sibling repositories
+        env:
+          FORGE_TOKEN: ${{ secrets.MANYMATH_FORGE_TOKEN }}
+        run: ./tool/ci_checkout_siblings.sh ../..
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/ManyMath/ratex/packages/ratex/rust
+      - name: Build composed distribution
+        run: ./apps/ManyMath/tool/build_web.sh
+      - name: Verify composed distribution
+        run: ./apps/ManyMath/tool/verify_web_dist.sh
+      - name: Upload distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: manymath-web
+          path: src/ManyMath/ManyMath/apps/ManyMath/build/dist
+          if-no-files-found: error
+          retention-days: 7

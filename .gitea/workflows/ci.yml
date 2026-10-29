@@ -1,0 +1,80 @@
+name: Private ManyMath integration
+on:
+  push:
+    branches: [main, 'maintenance/**', 'release/editor-without-review']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  DASH__SUPPRESS_ANALYTICS: 'true'
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+  CI: 'true'
+  DO_NOT_TRACK: '1'
+  RUSTUP_TOOLCHAIN: '1.94.0'
+  CARGO_BUILD_JOBS: '3'
+jobs:
+  analyze-test:
+    name: Verify package contracts and native editor
+    runs-on: manymath-maintenance-linux-x64
+    timeout-minutes: 40
+    env:
+      CARGO_HOME: ${{ runner.temp }}/manymath-${{ github.run_id }}-native-cargo
+    steps:
+      - name: Require private primary forge
+        env:
+          PRIMARY_SERVER: ${{ github.server_url }}
+        run: test "$PRIMARY_SERVER" = https://git.manymath.com
+      - uses: actions/checkout@v4
+      - name: Verify provisioned tools
+        run: |
+          flutter --version
+          dart --version 2>&1 | grep -F 'Dart SDK version: 3.13.2 '
+          rustc --version | grep -F 'rustc 1.94.0 '
+          python3 --version
+      - name: Resolve and verify exact dependencies and fixtures
+        run: |
+          flutter pub get --enforce-lockfile
+          python3 tool/integration.py
+          python3 -m unittest discover -s tool/tests -v
+      - name: Check generated compat macros
+        working-directory: apps/ManyMath
+        run: dart run tool/gen_compat_macros.dart --check
+      - name: Check formatting and analyze
+        run: |
+          dart format --output none --set-exit-if-changed apps/ManyMath/lib apps/ManyMath/test apps/ManyMath/tool/gen_compat_macros.dart
+          flutter analyze --no-pub apps/ManyMath
+      - name: Build resolved native engine and test
+        run: |
+          export RATEX_LIB="$(python3 tool/build_engine.py native)"
+          flutter test --no-pub apps/ManyMath/test
+  web-release:
+    name: Build and verify private web distribution
+    runs-on: manymath-maintenance-linux-x64
+    timeout-minutes: 40
+    env:
+      CARGO_HOME: ${{ runner.temp }}/manymath-${{ github.run_id }}-web-cargo
+    steps:
+      - name: Require private primary forge
+        env:
+          PRIMARY_SERVER: ${{ github.server_url }}
+        run: test "$PRIMARY_SERVER" = https://git.manymath.com
+      - uses: actions/checkout@v4
+      - name: Verify provisioned tools and target
+        run: |
+          flutter --version
+          dart --version 2>&1 | grep -F 'Dart SDK version: 3.13.2 '
+          rustc --version | grep -F 'rustc 1.94.0 '
+          rustup target list --installed | grep -Fx wasm32-unknown-unknown
+          node --version
+      - name: Resolve and verify exact dependencies and fixtures
+        run: |
+          flutter pub get --enforce-lockfile
+          python3 tool/integration.py
+      - name: Build composed distribution
+        run: ./apps/ManyMath/tool/build_web.sh
+      - name: Verify composed distribution
+        run: ./apps/ManyMath/tool/verify_web_dist.sh

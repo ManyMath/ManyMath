@@ -17,6 +17,11 @@ required_site_assets=(
   index.html
   404.html
   assets/site.css
+  assets/brand/tokens/manymath-brand.css
+  assets/brand/tokens/fonts.css
+  assets/brand/tokens/fallbacks.css
+  assets/brand/fonts/latinmodern/lmroman10-regular.woff2
+  assets/brand/fonts/inter/inter-var.woff2
   assets/brand/marks/manymath.svg
   assets/brand/og.png
   assets/hero-theme-light.png

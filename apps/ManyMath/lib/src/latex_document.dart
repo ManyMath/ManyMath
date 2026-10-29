@@ -15,9 +15,10 @@
 /// jump from a failed formula back to the exact editor selection.
 library;
 
-import 'tikz_diagram.dart';
+import 'compat_macros.g.dart';
+import 'tikz_model.dart';
 
-export 'tikz_diagram.dart' show TikzDiagram;
+export 'tikz_model.dart' show TikzDiagram;
 
 /// One block of a parsed document, in source order.
 sealed class DocBlock {
@@ -32,6 +33,9 @@ final class TitleBlock extends DocBlock {
     this.titleSourceMap,
     this.authorSourceMap,
     this.dateSourceMap,
+    this.titleSpans,
+    this.authorSpans,
+    this.dateSpans,
   });
 
   final String? title;
@@ -40,7 +44,32 @@ final class TitleBlock extends DocBlock {
   final List<int>? titleSourceMap;
   final List<int>? authorSourceMap;
   final List<int>? dateSourceMap;
+
+  /// The metadata as parsed with the document's own macros, labels and
+  /// citations, like the body. Null for a block built without a document.
+  final List<DocInline>? titleSpans;
+  final List<DocInline>? authorSpans;
+  final List<DocInline>? dateSpans;
+
+  /// What to render for each field: the document-aware spans, or a plain
+  /// parse of the source for a block built by hand.
+  List<DocInline>? get titleInlines =>
+      titleSpans ?? _plainMetadata(title, titleSourceMap);
+  List<DocInline>? get authorInlines =>
+      authorSpans ?? _plainMetadata(author, authorSourceMap);
+  List<DocInline>? get dateInlines =>
+      dateSpans ?? _plainMetadata(date, dateSourceMap);
+
+  /// The fields that are present, in display order.
+  List<List<DocInline>> get metadataInlines => <List<DocInline>>[
+    ?titleInlines,
+    ?authorInlines,
+    ?dateInlines,
+  ];
 }
+
+List<DocInline>? _plainMetadata(String? source, List<int>? sourceMap) =>
+    source == null ? null : parseInline(source, sourceMap: sourceMap);
 
 final class HeadingBlock extends DocBlock {
   const HeadingBlock(this.level, this.spans);
@@ -270,32 +299,182 @@ const _mathEnvironments = {
   'alignat*',
   'gather',
   'gather*',
+  // Not laid out by RaTeX; see _portableMathEnvironment.
+  'multline',
+  'multline*',
+  'eqnarray',
+  'eqnarray*',
+  'flalign',
+  'flalign*',
+  'DPalign',
+  'DPalign*',
+  'DPgather',
+  'DPgather*',
 };
+
+/// Rewrites the display environments RaTeX does not lay out into ones it
+/// does, carrying the per-character source map along so engine errors still
+/// point at the original text. Text the rewrite adds maps to the source of
+/// the `\begin` or `\end` it stands in for.
+///
+/// * `multline` becomes one numbered `equation` around `gathered`: a single
+///   number, its lines centred rather than staggered.
+/// * `eqnarray` becomes `align`: each row's `a & = & b` loses its second `&`,
+///   giving align's right/left pair `a &= b`.
+/// * `flalign` and Distributed Proofreaders' `DPalign` become `align`, without
+///   the flush margins; `DPgather` becomes `gather`.
+({String latex, List<int> map}) _portableMathEnvironment(
+  String name,
+  String latex,
+  List<int> map,
+) {
+  final star = name.endsWith('*') ? '*' : '';
+  final base = name.replaceFirst('*', '');
+  final begin = '\\begin{$name}';
+  final end = '\\end{$name}';
+  if (!latex.startsWith(begin) ||
+      !latex.endsWith(end) ||
+      map.length != latex.length ||
+      !const {
+        'multline',
+        'eqnarray',
+        'flalign',
+        'DPalign',
+        'DPgather',
+      }.contains(base)) {
+    final normalized = _normalizeDpMath(latex, map);
+    return (latex: normalized.latex, map: normalized.map!);
+  }
+  var bodyStart = begin.length;
+  final bodyEnd = latex.length - end.length;
+  if ((base == 'DPalign' || base == 'DPgather') &&
+      bodyStart < bodyEnd &&
+      latex[bodyStart] == '[') {
+    final close = _closeBracket(latex, bodyStart);
+    if (close > bodyStart &&
+        close < bodyEnd &&
+        !latex.substring(bodyStart, close).contains('\n')) {
+      bodyStart = close + 1;
+    }
+  }
+  final out = StringBuffer();
+  final outMap = <int>[];
+  void synthetic(String text, int source) {
+    out.write(text);
+    outMap.addAll(List<int>.filled(text.length, source));
+  }
+
+  void copy(int from, int to, {Set<int> skip = const {}}) {
+    for (var k = from; k < to; k++) {
+      if (skip.contains(k)) continue;
+      out.write(latex[k]);
+      outMap.add(map[k]);
+    }
+  }
+
+  switch (base) {
+    case 'multline':
+      synthetic('\\begin{equation$star}\\begin{gathered}', map[0]);
+      copy(bodyStart, bodyEnd);
+      synthetic('\\end{gathered}\\end{equation$star}', map[bodyEnd]);
+    case 'eqnarray':
+      synthetic('\\begin{align$star}', map[0]);
+      copy(
+        bodyStart,
+        bodyEnd,
+        skip: _secondColumnSeparators(latex, bodyStart, bodyEnd),
+      );
+      synthetic('\\end{align$star}', map[bodyEnd]);
+    case 'DPgather':
+      synthetic('\\begin{gather$star}', map[0]);
+      copy(bodyStart, bodyEnd);
+      synthetic('\\end{gather$star}', map[bodyEnd]);
+    default:
+      synthetic('\\begin{align$star}', map[0]);
+      copy(bodyStart, bodyEnd);
+      synthetic('\\end{align$star}', map[bodyEnd]);
+  }
+  final normalized = _normalizeDpMath(out.toString(), outMap);
+  return (latex: normalized.latex, map: normalized.map!);
+}
+
+/// Offsets of the second top-level `&` in each `\\`-separated row of
+/// `latex[from, to)`, ignoring braces, escaped `\&` and nested environments.
+Set<int> _secondColumnSeparators(String latex, int from, int to) {
+  final result = <int>{};
+  var braces = 0;
+  var environments = 0;
+  var separators = 0;
+  var i = from;
+  while (i < to) {
+    final char = latex[i];
+    if (latex.startsWith('\\begin{', i)) {
+      environments++;
+      i += 7;
+    } else if (latex.startsWith('\\end{', i)) {
+      environments--;
+      i += 5;
+    } else if (char == '\\') {
+      if (i + 1 < to &&
+          latex[i + 1] == '\\' &&
+          braces == 0 &&
+          environments == 0) {
+        separators = 0;
+      }
+      i += 2;
+    } else {
+      if (char == '{') braces++;
+      if (char == '}') braces--;
+      if (char == '&' && braces == 0 && environments == 0) {
+        separators++;
+        if (separators == 2) result.add(i);
+      }
+      i++;
+    }
+  }
+  return result;
+}
 
 /// Verbatim-like environments captured as a whole [CodeBlock]; kept in sync
 /// with [_verbatimEnvironmentRe] above, which shields their `%` characters
 /// from comment-stripping.
-const _codeEnvironments = {'lstlisting', 'verbatim', 'Verbatim', 'minted'};
+const _codeEnvironments = {
+  'lstlisting',
+  'verbatim',
+  'Verbatim',
+  'minted',
+  'alltt',
+  'PGtext',
+};
 
 /// `amsthm`-style theorem environments captured as a [TheoremBlock], mapped
-/// to the noun their number is announced with. only the
-/// standard amsthm names: a paper's own `\newenvironment`-based theorem
-/// boxes (built on `mdframed`/`framed` rather than amsthm) have too much
-/// custom structure to approximate safely, so those are left alone rather
-/// than guessed at.
+/// to the noun their number is announced with. Includes standard amsthm
+/// names and the capitalized theorem environments used in Project Gutenberg /
+/// Distributed Proofreaders textbooks (Hardy, Wentworth).
 const _theoremEnvironmentNouns = {
   'definition': 'Definition',
   'defn': 'Definition',
+  'Definition': 'Definition',
+  'Definitions': 'Definition',
+  'Defn': 'Definition',
   'theorem': 'Theorem',
   'thm': 'Theorem',
+  'Theorem': 'Theorem',
+  'ParTheorem': 'Theorem',
   'lemma': 'Lemma',
   'lem': 'Lemma',
   'corollary': 'Corollary',
   'cor': 'Corollary',
+  'Corollary': 'Corollary',
+  'Cor': 'Corollary',
   'proposition': 'Proposition',
   'prop': 'Proposition',
   'remark': 'Remark',
   'rem': 'Remark',
+  'Remark': 'Remark',
+  'Result': 'Result',
+  'Soln': 'Solution',
+  'Construction': 'Construction',
   'claim': 'Claim',
   'observation': 'Observation',
   'example': 'Example',
@@ -347,6 +526,8 @@ class TheoremEnvSpec {
   const TheoremEnvSpec(this.noun, this.counter, this.within);
 
   final String noun;
+
+  /// Empty for `\newtheorem*`, whose environments are not numbered.
   final String counter;
   final String? within;
 }
@@ -356,15 +537,16 @@ class TheoremEnvSpec {
 Map<String, TheoremEnvSpec> _parseTheoremDecls(String text) {
   final specs = <String, TheoremEnvSpec>{};
   final decl = RegExp(
-    r'\\new(?:framed)?theorem\*?\{([^}]+)\}'
+    r'\\new(?:framed)?theorem(\*?)\{([^}]+)\}'
     r'(?:\[([^\]]+)\])?\{([^}]+)\}(?:\[([^\]]+)\])?',
   );
   for (final m in decl.allMatches(text)) {
-    final env = m.group(1)!.trim();
+    final env = m.group(2)!.trim();
+    final unnumbered = m.group(1) == '*';
     specs[env] = TheoremEnvSpec(
-      m.group(3)!.trim(),
-      m.group(2)?.trim() ?? env,
-      m.group(4)?.trim(),
+      m.group(4)!.trim(),
+      unnumbered ? '' : m.group(3)?.trim() ?? env,
+      m.group(5)?.trim(),
     );
   }
   return specs;
@@ -427,24 +609,24 @@ _collectReferences(
   var bibCount = 0;
 
   final marker = RegExp(
-    r'\\(sub){0,2}section\*?\{'
+    r'\\((?:sub){0,2})section(\*?)(?:\s*\[[^\]]*\])?\s*\{'
     r'|\\label\{([^}]*)\}'
     r'|\\bibitem(?:\[[^\]]*\])?\{([^}]*)\}'
     r'|\\begin\{([a-zA-Z*]+)\}'
     r'|\\end\{([a-zA-Z*]+)\}',
   );
   for (final m in marker.allMatches(text)) {
-    final bibKey = m.group(3);
-    final labelName = m.group(2);
-    final beginEnv = m.group(4);
-    final endEnv = m.group(5);
+    final bibKey = m.group(4);
+    final labelName = m.group(3);
+    final beginEnv = m.group(5);
+    final endEnv = m.group(6);
     if (bibKey != null) {
       bibCount++;
       citations[bibKey] = bibCount;
     } else if (beginEnv != null) {
       final spec = envs[beginEnv];
       if (spec == null) continue;
-      if (spec.noun == 'Proof') {
+      if (spec.noun == 'Proof' || spec.counter.isEmpty) {
         open.add((beginEnv, spec.noun, null));
         continue;
       }
@@ -489,7 +671,9 @@ _collectReferences(
         labels[labelName] = LabelInfo('$count', noun);
       }
     } else {
-      final level = 'sub'.allMatches(m.group(0)!).length;
+      // Starred sections are unnumbered and step no counter.
+      if (m.group(2) == '*') continue;
+      final level = m.group(1)!.length ~/ 3;
       sectionCounters[level]++;
       for (var i = level + 1; i < sectionCounters.length; i++) {
         sectionCounters[i] = 0;
@@ -514,49 +698,135 @@ _collectReferences(
 /// drops `\label` entirely (a `\label` itself prints nothing in LaTeX
 /// either). An unresolved target renders as `??`, matching what LaTeX
 /// prints for a `\ref` with no matching `\label`.
-String _resolveReferences(
+({String text, List<int>? map}) _resolveReferences(
   String text,
+  List<int>? map,
   Map<String, LabelInfo> labels,
   Map<String, int> citations,
 ) {
   // doesn't also bail when labels/citations are both empty: an
   // undefined \ref must still render as "??" (matching real LaTeX), not
   // leak its raw source.
-  if (!text.contains(r'\')) return text;
-  final pattern = RegExp(
-    r'\\label\{[^}]*\}'
-    r'|\\eqref\{([^}]*)\}'
-    r'|\\[Cc]ref\{([^}]*)\}'
-    r'|\\ref\{([^}]*)\}'
-    r'|\\cite[tp]?\{([^}]*)\}',
-  );
-  return text.replaceAllMapped(pattern, (m) {
-    final whole = m.group(0)!;
-    if (whole.startsWith(r'\label')) return '';
-    final eqrefTarget = m.group(1);
-    final crefTarget = m.group(2);
-    final refTarget = m.group(3);
-    final citeKeys = m.group(4);
-    if (eqrefTarget != null) {
-      return '(${labels[eqrefTarget]?.number ?? '??'})';
-    }
-    if (crefTarget != null) {
-      final info = labels[crefTarget];
-      if (info == null) return '??';
-      final noun = whole.startsWith(r'\C')
-          ? info.noun[0].toUpperCase() + info.noun.substring(1)
-          : info.noun;
-      return '$noun ${info.number}';
-    }
-    if (refTarget != null) {
-      return labels[refTarget]?.number ?? '??';
-    }
-    final numbers = citeKeys!
-        .split(',')
-        .map((key) => citations[key.trim()]?.toString() ?? '?');
-    return '[${numbers.join(', ')}]';
-  });
+  if (!text.contains(r'\')) return (text: text, map: map);
+  // Each replacement maps to the source of the command it replaces, so
+  // math elsewhere in the paragraph keeps its exact source position.
+  final out = StringBuffer();
+  final outMap = map == null ? null : <int>[];
+  var copied = 0;
+  for (final m in _referencePattern.allMatches(text)) {
+    out.write(text.substring(copied, m.start));
+    outMap?.addAll(map!.sublist(copied, m.start));
+    final replacement = _referenceText(m, labels, citations);
+    out.write(replacement);
+    outMap?.addAll(List<int>.filled(replacement.length, map![m.start]));
+    copied = m.end;
+  }
+  out.write(text.substring(copied));
+  outMap?.addAll(map!.sublist(copied));
+  return (text: out.toString(), map: outMap);
 }
+
+final _referencePattern = RegExp(
+  r'\\label\{[^}]*\}'
+  r'|\\eqref\{([^}]*)\}'
+  r'|\\([Cc]ref|[Aa]utoref)\{([^}]*)\}'
+  r'|\\ref\{([^}]*)\}'
+  r'|\\pageref\{[^}]*\}'
+  r'|\\cite[tp]?\*?(?:\s*\[([^\]]*)\])?(?:\s*\[([^\]]*)\])?\s*\{([^}]*)\}',
+);
+
+/// The text one [_referencePattern] match stands for.
+String _referenceText(
+  Match m,
+  Map<String, LabelInfo> labels,
+  Map<String, int> citations,
+) {
+  final whole = m.group(0)!;
+  if (whole.startsWith(r'\label')) return '';
+  // Page numbers only exist once the browser paginates a print, so like
+  // a first LaTeX run the reference shows as unresolved.
+  if (whole.startsWith(r'\pageref')) return '??';
+  final eqrefTarget = m.group(1);
+  final crefCommand = m.group(2);
+  final refTarget = m.group(4);
+  if (eqrefTarget != null) {
+    return '(${labels[eqrefTarget]?.number ?? '??'})';
+  }
+  if (crefCommand != null) {
+    return _namedReferences(
+      m.group(3)!,
+      labels,
+      capitalize: crefCommand != 'cref',
+    );
+  }
+  if (refTarget != null) {
+    return labels[refTarget]?.number ?? '??';
+  }
+  // natbib: one optional argument is a note after the numbers; two are a
+  // note before and a note after.
+  final first = m.group(5);
+  final second = m.group(6);
+  final before = second != null ? first : null;
+  final after = second ?? first;
+  final numbers = m
+      .group(7)!
+      .split(',')
+      .map((key) => citations[key.trim()]?.toString() ?? '?')
+      .join(', ');
+  final pre = before != null && before.trim().isNotEmpty ? '$before ' : '';
+  final post = after != null && after.trim().isNotEmpty ? ', $after' : '';
+  return '[$pre$numbers$post]';
+}
+
+/// `\cref`/`\Cref`/`\autoref` text for one or more comma-separated
+/// [targets]: "theorem 2", or for several of one kind "theorems 2 and 3",
+/// otherwise each named in turn. Unknown targets read "??".
+String _namedReferences(
+  String targets,
+  Map<String, LabelInfo> labels, {
+  required bool capitalize,
+}) {
+  String cased(String noun) => capitalize && noun.isNotEmpty
+      ? noun[0].toUpperCase() + noun.substring(1)
+      : noun;
+  final keys = [
+    for (final key in targets.split(','))
+      if (key.trim().isNotEmpty) key.trim(),
+  ];
+  final infos = [for (final key in keys) labels[key]];
+  if (infos.isEmpty) return '??';
+  final noun = infos.first?.noun;
+  if (infos.length > 1 &&
+      noun != null &&
+      noun.isNotEmpty &&
+      infos.every((info) => info != null && info.noun == noun)) {
+    return '${cased(_plural(noun))} '
+        '${_listJoin([for (final info in infos) info!.number])}';
+  }
+  return _listJoin([
+    for (final info in infos)
+      if (info == null)
+        '??'
+      else if (info.noun.isEmpty)
+        info.number
+      else
+        '${cased(info.noun)} ${info.number}',
+  ]);
+}
+
+String _plural(String noun) {
+  if (noun == 'appendix') return 'appendices';
+  if (RegExp(r'[^aeiou]y$').hasMatch(noun)) {
+    return '${noun.substring(0, noun.length - 1)}ies';
+  }
+  if (RegExp(r'(s|x|ch|sh)$').hasMatch(noun)) return '${noun}es';
+  return '${noun}s';
+}
+
+/// "a", "a and b", "a, b and c".
+String _listJoin(List<String> items) => items.length <= 2
+    ? items.join(' and ')
+    : '${items.sublist(0, items.length - 1).join(', ')} and ${items.last}';
 
 /// Parses [source] into document blocks. Lenient by construction: malformed
 /// input degrades to plain text rather than failing.
@@ -639,7 +909,7 @@ String _superscriptNumber(int n) =>
   if (!text.contains(r'\footnote')) return (text: text, map: map);
   final buf = StringBuffer();
   final outMap = <int>[];
-  final marker = RegExp(r'\\footnote(?![a-zA-Z])');
+  final marker = RegExp(r'\\footnote(?:text)?(?![a-zA-Z])');
   var i = 0;
   while (i < text.length) {
     if (text[i] == r'\' && text.startsWith(r'\\', i)) {
@@ -659,7 +929,7 @@ String _superscriptNumber(int n) =>
     }
     var at = _skipSpaces(text, m.end);
     if (at < text.length && text[at] == '[') {
-      final close = text.indexOf(']', at);
+      final close = _closeBracket(text, at);
       if (close > 0) at = _skipSpaces(text, close + 1);
     }
     final arg = at < text.length && text[at] == '{'
@@ -784,12 +1054,16 @@ class _BlockParser {
       final dollars = _delimited(text, i, r'$$', r'$$');
       if (dollars != null) {
         flushParagraph();
+        final normalized = _normalizeDpMath(
+          dollars.$1.trim(),
+          _trimmedSlice(map, text, i + 2, dollars.$2 - 2),
+        );
         blocks.add(
           DisplayMathBlock(
-            dollars.$1.trim(),
+            normalized.latex,
             sourceStart: map[i],
             sourceEnd: _spanEnd(map, dollars.$2),
-            latexSourceMap: _trimmedSlice(map, text, i + 2, dollars.$2 - 2),
+            latexSourceMap: normalized.map,
           ),
         );
         i = dollars.$2;
@@ -810,12 +1084,16 @@ class _BlockParser {
       final bracket = _delimited(text, i, r'\[', r'\]');
       if (bracket != null) {
         flushParagraph();
+        final normalized = _normalizeDpMath(
+          bracket.$1.trim(),
+          _trimmedSlice(map, text, i + 2, bracket.$2 - 2),
+        );
         blocks.add(
           DisplayMathBlock(
-            bracket.$1.trim(),
+            normalized.latex,
             sourceStart: map[i],
             sourceEnd: _spanEnd(map, bracket.$2),
-            latexSourceMap: _trimmedSlice(map, text, i + 2, bracket.$2 - 2),
+            latexSourceMap: normalized.map,
           ),
         );
         i = bracket.$2;
@@ -832,12 +1110,17 @@ class _BlockParser {
           final next = end + '\\end{$name}'.length;
           if (_mathEnvironments.contains(name)) {
             flushParagraph();
+            final portable = _portableMathEnvironment(
+              name,
+              text.substring(i, next).trim(),
+              _trimmedSlice(map, text, i, next),
+            );
             blocks.add(
               DisplayMathBlock(
-                text.substring(i, next).trim(),
+                portable.latex,
                 sourceStart: map[i],
                 sourceEnd: _spanEnd(map, next),
-                latexSourceMap: _trimmedSlice(map, text, i, next),
+                latexSourceMap: portable.map,
               ),
             );
             i = next;
@@ -973,7 +1256,7 @@ class _BlockParser {
             i = next;
             continue;
           }
-          if (name == 'quote' || name == 'quotation') {
+          if (name == 'quote' || name == 'quotation' || name == 'ToCPar') {
             flushParagraph();
             final children = parse(body, map.sublist(env.end, end));
             if (children.isNotEmpty) blocks.add(QuoteBlock(children));
@@ -995,6 +1278,7 @@ class _BlockParser {
           const floatKinds = {
             'figure': 'Figure',
             'figure*': 'Figure',
+            'wrapfigure': 'Figure',
             'table': 'Table',
             'table*': 'Table',
             // \DeclareCaptionType floats used by the FROSTLASS paper.
@@ -1007,10 +1291,21 @@ class _BlockParser {
             var floatBody = body;
             var floatStart = env.end;
             if (floatBody.startsWith('[')) {
-              final close = floatBody.indexOf(']');
+              final close = _closeBracket(floatBody, 0);
               if (close >= 0) {
                 floatBody = floatBody.substring(close + 1);
                 floatStart += close + 1;
+              }
+            }
+            if (name == 'wrapfigure') {
+              for (var a = 0; a < 2; a++) {
+                final at = _skipSpaces(floatBody, 0);
+                final arg = at < floatBody.length && floatBody[at] == '{'
+                    ? _balancedArg(floatBody, at)
+                    : null;
+                if (arg == null) break;
+                floatBody = floatBody.substring(arg.$2);
+                floatStart += arg.$2;
               }
             }
             _floatStack.add(floatKind);
@@ -1037,7 +1332,7 @@ class _BlockParser {
             var boxBody = body;
             var boxStart = env.end;
             if (boxBody.startsWith('[')) {
-              final close = boxBody.indexOf(']');
+              final close = _closeBracket(boxBody, 0);
               if (close >= 0) {
                 boxBody = boxBody.substring(close + 1);
                 boxStart += close + 1;
@@ -1056,12 +1351,141 @@ class _BlockParser {
             i = next;
             continue;
           }
+          if (name == 'multicols') {
+            flushParagraph();
+            var colBody = body;
+            var colStart = env.end;
+            final at = _skipSpaces(colBody, 0);
+            final cols = at < colBody.length && colBody[at] == '{'
+                ? _balancedArg(colBody, at)
+                : null;
+            if (cols != null) {
+              colBody = colBody.substring(cols.$2);
+              colStart += cols.$2;
+            }
+            final optAt = _skipSpaces(colBody, 0);
+            if (optAt < colBody.length && colBody[optAt] == '[') {
+              final close = _closeBracket(colBody, optAt);
+              if (close >= 0) {
+                colBody = colBody.substring(close + 1);
+                colStart += close + 1;
+              }
+            }
+            blocks.addAll(
+              parse(colBody, map.sublist(colStart, colStart + colBody.length)),
+            );
+            i = next;
+            continue;
+          }
+          if (name == 'changemargin') {
+            flushParagraph();
+            var marginBody = body;
+            var marginStart = env.end;
+            for (var a = 0; a < 2; a++) {
+              final at = _skipSpaces(marginBody, 0);
+              final arg = at < marginBody.length && marginBody[at] == '{'
+                  ? _balancedArg(marginBody, at)
+                  : null;
+              if (arg == null) break;
+              marginBody = marginBody.substring(arg.$2);
+              marginStart += arg.$2;
+            }
+            blocks.addAll(
+              parse(
+                marginBody,
+                map.sublist(marginStart, marginStart + marginBody.length),
+              ),
+            );
+            i = next;
+            continue;
+          }
+          if (name == 'Problems') {
+            flushParagraph();
+            var probBody = body;
+            var probStart = env.end;
+            if (probBody.startsWith('[')) {
+              final close = _closeBracket(probBody, 0);
+              if (close >= 0) {
+                probBody = probBody.substring(close + 1);
+                probStart += close + 1;
+              }
+            }
+            blocks.addAll(
+              parse(
+                probBody,
+                map.sublist(probStart, probStart + probBody.length),
+              ),
+            );
+            i = next;
+            continue;
+          }
+          if (name == 'Examples') {
+            flushParagraph();
+            var exBody = body;
+            var exStart = env.end;
+            final at = _skipSpaces(exBody, 0);
+            final numArg = at < exBody.length && exBody[at] == '{'
+                ? _balancedArg(exBody, at)
+                : null;
+            if (numArg != null) {
+              final label = numArg.$1.trim();
+              if (label.isNotEmpty) {
+                blocks.add(HeadingBlock(3, _inline('Examples $label', null)));
+              }
+              exBody = exBody.substring(numArg.$2);
+              exStart += numArg.$2;
+            }
+            blocks.addAll(
+              parse(exBody, map.sublist(exStart, exStart + exBody.length)),
+            );
+            i = next;
+            continue;
+          }
+          if (name == 'Answers') {
+            flushParagraph();
+            var ansBody = body;
+            var ansStart = env.end;
+            if (ansBody.startsWith('[')) {
+              final close = _closeBracket(ansBody, 0);
+              if (close >= 0) {
+                ansBody = ansBody.substring(close + 1);
+                ansStart += close + 1;
+              }
+            }
+            final headerArgs = <String>[];
+            for (var a = 0; a < 3; a++) {
+              final at = _skipSpaces(ansBody, 0);
+              final arg = at < ansBody.length && ansBody[at] == '{'
+                  ? _balancedArg(ansBody, at)
+                  : null;
+              if (arg == null) break;
+              headerArgs.add(arg.$1.trim());
+              ansBody = ansBody.substring(arg.$2);
+              ansStart += arg.$2;
+            }
+            if (headerArgs.isNotEmpty && headerArgs.first.isNotEmpty) {
+              final subtitle = headerArgs.length > 1 && headerArgs[1].isNotEmpty
+                  ? ' — ${headerArgs[1]}'
+                  : '';
+              blocks.add(
+                HeadingBlock(
+                  3,
+                  _inline('Exercise ${headerArgs.first}$subtitle', null),
+                ),
+              );
+            }
+            blocks.addAll(
+              parse(ansBody, map.sublist(ansStart, ansStart + ansBody.length)),
+            );
+            i = next;
+            continue;
+          }
           if (name == 'mdframed') {
             flushParagraph();
             var boxBody = body;
             var boxStart = env.end;
             if (boxBody.startsWith('[')) {
-              final close = boxBody.indexOf(']');
+              final close = _closeBracket(boxBody, 0);
               if (close >= 0) {
                 boxBody = boxBody.substring(close + 1);
                 boxStart += close + 1;
@@ -1075,9 +1499,23 @@ class _BlockParser {
             i = next;
             continue;
           }
-          // appendices (the appendix package) wraps trailing sections but
-          // adds nothing visible itself.
-          if (name == 'appendices') {
+          // appendices (the appendix package) wraps trailing sections, and
+          // subequations groups display math under one number; neither adds
+          // anything visible itself. Size/alignment wrappers in DP texts parse
+          // their body in place as well.
+          if (const {
+            'appendices',
+            'subequations',
+            'SubProbs',
+            'footnotesize',
+            'small',
+            'scriptsize',
+            'normalsize',
+            'large',
+            'Large',
+            'flushright',
+            'flushleft',
+          }.contains(name)) {
             flushParagraph();
             blocks.addAll(parse(body, map.sublist(env.end, end)));
             i = next;
@@ -1109,10 +1547,11 @@ class _BlockParser {
             flushParagraph();
             var theoremBody = body;
             var theoremBodyStart = env.end;
-            // An optional [Title], e.g. \begin{definition}[Random Oracle].
+            // An optional [Title], e.g. \begin{definition}[Random Oracle], or
+            // ParTheorem's required {Title} argument in Project Gutenberg texts.
             List<DocInline>? title;
             if (theoremBody.startsWith('[')) {
-              final close = theoremBody.indexOf(']');
+              final close = _closeBracket(theoremBody, 0);
               if (close >= 0) {
                 final titleText = theoremBody.substring(1, close);
                 final titleStart = theoremBodyStart + 1;
@@ -1122,6 +1561,20 @@ class _BlockParser {
                 );
                 theoremBody = theoremBody.substring(close + 1);
                 theoremBodyStart += close + 1;
+              }
+            } else if (name == 'ParTheorem' && theoremBody.startsWith('{')) {
+              final arg = _balancedArg(theoremBody, 0);
+              if (arg != null) {
+                final titleText = arg.$1;
+                final titleStart = theoremBodyStart + 1;
+                if (titleText.trim().isNotEmpty) {
+                  title = _inline(
+                    titleText,
+                    map.sublist(titleStart, titleStart + titleText.length),
+                  );
+                }
+                theoremBody = theoremBody.substring(arg.$2);
+                theoremBodyStart += arg.$2;
               }
             }
             // The number the counter model assigned this instance (see
@@ -1156,7 +1609,7 @@ class _BlockParser {
       if (caption != null) {
         var at = _skipSpaces(text, caption.end);
         if (at < text.length && text[at] == '[') {
-          final close = text.indexOf(']', at);
+          final close = _closeBracket(text, at);
           if (close > 0) at = _skipSpaces(text, close + 1);
         }
         final arg = at < text.length && text[at] == '{'
@@ -1178,15 +1631,73 @@ class _BlockParser {
         }
       }
 
-      // Sections and \maketitle, recognized at any position.
+      // Sections, chapters, Project Gutenberg structural headings, and
+      // \maketitle, recognized at any position.
+      // The optional [short] title is for the table of contents and
+      // running heads; the heading itself shows the full {title}.
+      final chapter = RegExp(
+        r'\\(?:chapter\*?|AltChapter|ChapterStar)(?:\s*\[[^\]]*\])?\s*\{',
+      ).matchAsPrefix(text, i);
+      if (chapter != null) {
+        final arg = _balancedArg(text, chapter.end - 1);
+        if (arg != null) {
+          flushParagraph();
+          blocks.add(
+            HeadingBlock(
+              1,
+              _inline(
+                arg.$1,
+                map.sublist(chapter.end, chapter.end + arg.$1.length),
+              ),
+            ),
+          );
+          i = arg.$2;
+          continue;
+        }
+      }
+      final dpChapter = RegExp(
+        r'\\Chapter(?:\s*\[[^\]]*\])?\s*\{',
+      ).matchAsPrefix(text, i);
+      if (dpChapter != null) {
+        final numArg = _balancedArg(text, dpChapter.end - 1);
+        if (numArg != null) {
+          final titleStart = _skipSpaces(text, numArg.$2);
+          final titleArg = titleStart < text.length && text[titleStart] == '{'
+              ? _balancedArg(text, titleStart)
+              : null;
+          if (titleArg != null) {
+            flushParagraph();
+            final numText = numArg.$1.trim();
+            final headingText = numText.isEmpty
+                ? titleArg.$1
+                : 'Chapter $numText: ${titleArg.$1}';
+            blocks.add(
+              HeadingBlock(
+                1,
+                _inline(
+                  headingText,
+                  numText.isEmpty
+                      ? map.sublist(
+                          titleStart + 1,
+                          titleStart + 1 + titleArg.$1.length,
+                        )
+                      : null,
+                ),
+              ),
+            );
+            i = titleArg.$2;
+            continue;
+          }
+        }
+      }
       final section = RegExp(
-        r'\\(sub){0,2}section\*?\{',
+        r'\\((?:sub){0,2})section\*?(?:\s*\[[^\]]*\])?\s*\{',
       ).matchAsPrefix(text, i);
       if (section != null) {
         final arg = _balancedArg(text, section.end - 1);
         if (arg != null) {
           flushParagraph();
-          final level = 'sub'.allMatches(section[0]!).length + 1;
+          final level = section.group(1)!.length ~/ 3 + 1;
           blocks.add(
             HeadingBlock(
               level,
@@ -1200,6 +1711,126 @@ class _BlockParser {
           continue;
         }
       }
+      final dpSection = RegExp(
+        r'\\(Section|Subsection|Note|exheadin|exhead)(?:\s*\[[^\]]*\])?\s*\{',
+      ).matchAsPrefix(text, i);
+      if (dpSection != null) {
+        final arg = _balancedArg(text, dpSection.end - 1);
+        if (arg != null) {
+          flushParagraph();
+          final level = dpSection.group(1) == 'Section' ? 2 : 3;
+          blocks.add(
+            HeadingBlock(
+              level,
+              _inline(
+                arg.$1,
+                map.sublist(dpSection.end, dpSection.end + arg.$1.length),
+              ),
+            ),
+          );
+          i = arg.$2;
+          continue;
+        }
+      }
+      final dpExercises = RegExp(
+        r'\\Exercises?(?:\s*\[[^\]]*\])?\s*\{',
+      ).matchAsPrefix(text, i);
+      if (dpExercises != null) {
+        final arg = _balancedArg(text, dpExercises.end - 1);
+        if (arg != null) {
+          flushParagraph();
+          final numText = arg.$1.trim();
+          blocks.add(
+            HeadingBlock(
+              2,
+              _inline(
+                numText.isEmpty ? 'Exercises' : 'Exercises $numText',
+                null,
+              ),
+            ),
+          );
+          i = arg.$2;
+          continue;
+        }
+      }
+      // Euclid's Elements (21076-t.tex) book & proposition macros.
+      final mybook = RegExp(r'\\mybook\s*\{').matchAsPrefix(text, i);
+      if (mybook != null) {
+        final numArg = _balancedArg(text, mybook.end - 1);
+        if (numArg != null) {
+          final titleStart = _skipSpaces(text, numArg.$2);
+          final titleArg = titleStart < text.length && text[titleStart] == '{'
+              ? _balancedArg(text, titleStart)
+              : null;
+          if (titleArg != null) {
+            flushParagraph();
+            blocks.add(
+              HeadingBlock(
+                1,
+                _inline('Book ${numArg.$1.trim()}: ${titleArg.$1}', null),
+              ),
+            );
+            i = titleArg.$2;
+            continue;
+          }
+        }
+      }
+      final myprop = RegExp(
+        r'\\(mypropflow|mypropflot|mypropl|myprop)(?![a-zA-Z])',
+      ).matchAsPrefix(text, i);
+      if (myprop != null) {
+        final kind = myprop.group(1)!;
+        final argCount = switch (kind) {
+          'mypropflot' => 6,
+          'mypropflow' || 'mypropl' => 5,
+          _ => 4,
+        };
+        var at = myprop.end;
+        final args = <(String, int)>[];
+        for (var a = 0; a < argCount; a++) {
+          at = _skipSpaces(text, at);
+          final arg = at < text.length && text[at] == '{'
+              ? _balancedArg(text, at)
+              : null;
+          if (arg == null) break;
+          args.add((arg.$1, at + 1));
+          at = arg.$2;
+        }
+        if (args.length == argCount) {
+          flushParagraph();
+          final propNum = args[1].$1.replaceAll(RegExp(r'\.$'), '').trim();
+          final enunciationIdx = switch (kind) {
+            'mypropflow' || 'mypropflot' => 4,
+            'mypropl' => 3,
+            _ => 2,
+          };
+          final enunciation = args[enunciationIdx];
+          final propBlocks = <DocBlock>[
+            ...parse(
+              enunciation.$1,
+              map.sublist(
+                enunciation.$2,
+                enunciation.$2 + enunciation.$1.length,
+              ),
+            ),
+          ];
+          if (kind == 'mypropflot') {
+            final post = args[5];
+            propBlocks.addAll(
+              parse(post.$1, map.sublist(post.$2, post.$2 + post.$1.length)),
+            );
+          }
+          blocks.add(
+            TheoremBlock(
+              noun: 'Proposition',
+              number: propNum.isEmpty ? null : propNum,
+              body: propBlocks,
+            ),
+          );
+          i = at;
+          continue;
+        }
+      }
       if (text.startsWith(r'\maketitle', i)) {
         flushParagraph();
         blocks.add(
@@ -1210,6 +1841,15 @@ class _BlockParser {
             titleSourceMap: title?.sourceMap,
             authorSourceMap: author?.sourceMap,
             dateSourceMap: date?.sourceMap,
+            titleSpans: title == null
+                ? null
+                : _inline(title!.value, title!.sourceMap),
+            authorSpans: author == null
+                ? null
+                : _inline(author!.value, author!.sourceMap),
+            dateSpans: date == null
+                ? null
+                : _inline(date!.value, date!.sourceMap),
           ),
         );
         i += r'\maketitle'.length;
@@ -1240,7 +1880,7 @@ class _BlockParser {
     }
     at = _skipSpaces(body, at);
     if (at < body.length && body[at] == '[') {
-      final close = body.indexOf(']', at);
+      final close = _closeBracket(body, at);
       if (close > 0) at = close + 1;
     }
     at = _skipSpaces(body, at);
@@ -1391,20 +2031,24 @@ List<DocInline> parseInline(
     'sourceMap must align 1:1 with source',
   );
   {
-    var expanded = macros.isEmpty ? source : _expandTextMacros(source, macros);
+    final normalizedDp = _normalizeDpProse(source, sourceMap);
+    source = normalizedDp.text;
+    sourceMap = normalizedDp.map;
+    final expanded = macros.isEmpty
+        ? source
+        : _expandTextMacros(source, macros);
+    // A macro expansion can rewrite text arbitrarily, so per-character
+    // source positions no longer line up; math in such a paragraph loses
+    // its precise jump-to-source target rather than pointing at the wrong
+    // place.
+    if (expanded != source) sourceMap = null;
     // Not gated on labels/citations being non-empty: an undefined \ref
     // must still resolve to "??" (matching real LaTeX) rather than leak
     // its raw source, so this always runs when there's a backslash at all
-    // (see _resolveReferences).
-    expanded = _resolveReferences(expanded, labels, citations);
-    if (expanded != source) {
-      source = expanded;
-      // The expansion changed the text's length/content, so per-character
-      // source positions no longer line up; math discovered inside an
-      // expanded macro loses its precise jump-to-source target rather than
-      // pointing at the wrong place.
-      sourceMap = null;
-    }
+    // (see _resolveReferences). It keeps the source map aligned.
+    final resolved = _resolveReferences(expanded, sourceMap, labels, citations);
+    source = resolved.text;
+    sourceMap = resolved.map;
   }
   final spans = <DocInline>[];
   final run = StringBuffer();
@@ -1435,19 +2079,21 @@ List<DocInline> parseInline(
     int delimiterLength,
   ) {
     flushRun();
+    final rawMap = sourceMap == null
+        ? null
+        : _trimmedSlice(
+            sourceMap,
+            source,
+            constructStart + delimiterLength,
+            constructEnd - delimiterLength,
+          );
+    final normalized = _normalizeDpMath(latex, rawMap);
     spans.add(
       InlineMath(
-        latex,
+        normalized.latex,
         sourceStart: sourceMap == null ? null : sourceMap[constructStart],
         sourceEnd: sourceMap == null ? null : _spanEnd(sourceMap, constructEnd),
-        latexSourceMap: sourceMap == null
-            ? null
-            : _trimmedSlice(
-                sourceMap,
-                source,
-                constructStart + delimiterLength,
-                constructEnd - delimiterLength,
-              ),
+        latexSourceMap: normalized.map,
       ),
     );
   }
@@ -1567,7 +2213,10 @@ List<DocInline> parseInline(
         final based = _accentBase(source, i + 2);
         if (based != null) {
           final content = based.$1;
-          run.write(content[0] + mark + content.substring(1));
+          // The mark follows the first character, which may be a surrogate
+          // pair (`\'{𝑎}`); splitting it would leave unpaired halves.
+          final first = String.fromCharCode(content.runes.first);
+          run.write(first + mark + content.substring(first.length));
           i = based.$2;
           continue;
         }
@@ -1714,6 +2363,22 @@ List<DocInline> parseInline(
       // \and separates \author/\keywords entries; a middle dot is how
       // multi-author headers commonly typeset it.
       r'\and': ' · ',
+      // Classical / Project Gutenberg ligatures and abbreviations.
+      r'\ae': 'æ',
+      r'\AE': 'Æ',
+      r'\oe': 'œ',
+      r'\OE': 'Œ',
+      r'\ss': 'ß',
+      r'\ie': 'i.e. ',
+      r'\Ie': 'I.e. ',
+      r'\IE': 'i.e. ',
+      r'\eg': 'e.g. ',
+      r'\cf': 'cf. ',
+      r'\NB': 'N.B. ',
+      r'\HCF': 'H.C.F.',
+      r'\LCM': 'L.C.M.',
+      r'\LCD': 'L.C.D.',
+      r'\pgram': '▱',
     };
     // \today renders the current date, like a LaTeX compile does.
     if (source.startsWith(r'\today', i) &&
@@ -1879,6 +2544,19 @@ List<DocInline> parseInline(
           'centering',
           'raggedright',
           'raggedleft',
+          'Loosen',
+          'loosen',
+          'frontmatter',
+          'mainmatter',
+          'backmatter',
+          'FrontMatter',
+          'MainMatter',
+          'BackMatter',
+          'PGBoilerPlate',
+          'PGLicense',
+          'FlushRunningHeads',
+          'PrintBreak',
+          'ScreenBreak',
         };
         final styled =
             boldDeclarations.contains(word) ||
@@ -1946,20 +2624,33 @@ List<DocInline> parseInline(
           'onehalfspacing': 0,
           'singlespacing': 0,
           'doublespacing': 0,
+          'phantomsection': 0,
+          'tb': 0,
+          'Strut': 0,
+          'DStrut': 0,
+          'Pause': 0,
           'pagestyle': 1,
           'thispagestyle': 1,
           'pagenumbering': 1,
           'linespread': 1,
           'captionsetup': 1,
           'markright': 1,
+          'stepcounter': 1,
+          'refstepcounter': 1,
+          'enlargethispage': 1,
+          'needspace': 1,
+          'Needspace': 1,
           'setlength': 2,
           'addtolength': 2,
           'setcounter': 2,
           'addtocounter': 2,
           'numberwithin': 2,
           'markboth': 2,
+          'BookMark': 2,
+          'pdfbookmark': 2,
           'addcontentsline': 3,
           'bibliographystyle': 1,
+          'bibliography': 1,
           'index': 1,
           'glsadd': 1,
           'includegraphics': 1,
@@ -1974,10 +2665,12 @@ List<DocInline> parseInline(
         final dropArgs = droppedCommands[word];
         if (dropArgs != null) {
           var j = i + 1 + word.length;
-          // An optional [...] group (e.g. \rule[raise]{w}{h}).
-          var jj = _skipSpaces(source, j);
-          if (jj < source.length && source[jj] == '[') {
-            final close = source.indexOf(']', jj);
+          // An optional [...] group (e.g. \rule[raise]{w}{h}). Commands
+          // without arguments take none: `\noindent [0,1]` keeps its
+          // interval.
+          final jj = _skipSpaces(source, j);
+          if (dropArgs > 0 && jj < source.length && source[jj] == '[') {
+            final close = _closeBracket(source, jj);
             if (close > 0) j = close + 1;
           }
           var ok = true;
@@ -2033,6 +2726,108 @@ List<DocInline> parseInline(
         monospace: false,
         underline: false,
       ),
+      r'\Paragraph{': (
+        bold: true,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\Topic{': (
+        bold: true,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\Item{': (
+        bold: true,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\Itemp{': (
+        bold: true,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\SubItem{': (
+        bold: true,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\Example{': (
+        bold: true,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\Case{': (
+        bold: false,
+        italic: true,
+        monospace: false,
+        underline: false,
+      ),
+      r'\Defn{': (
+        bold: false,
+        italic: true,
+        monospace: false,
+        underline: false,
+      ),
+      r'\Dictum{': (
+        bold: false,
+        italic: true,
+        monospace: false,
+        underline: false,
+      ),
+      r'\Emph{': (
+        bold: false,
+        italic: true,
+        monospace: false,
+        underline: false,
+      ),
+      r'\Title{': (
+        bold: false,
+        italic: true,
+        monospace: false,
+        underline: false,
+      ),
+      r'\Book{': (
+        bold: false,
+        italic: true,
+        monospace: false,
+        underline: false,
+      ),
+      r'\Author{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\Ans{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\Par{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\rlap{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\llap{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
       r'\texttt{': (
         bold: false,
         italic: false,
@@ -2059,6 +2854,45 @@ List<DocInline> parseInline(
       // raised — this parser's inline model has no notion of baseline
       // offset — but that beats leaking the raw command.
       r'\textsuperscript{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      // Face and family switches, and \mbox's unbreakable box, have no
+      // counterpart in this inline model; their text still belongs in the
+      // paragraph rather than leaking as a raw command.
+      r'\textsc{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\textrm{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\textsf{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\textnormal{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\textup{': (
+        bold: false,
+        italic: false,
+        monospace: false,
+        underline: false,
+      ),
+      r'\mbox{': (
         bold: false,
         italic: false,
         monospace: false,
@@ -2169,9 +3003,7 @@ String _todayText() {
     for (final block in blocks) {
       switch (block) {
         case TitleBlock():
-          for (final metadata in [block.title, block.author, block.date]) {
-            if (metadata != null) countSpans(parseInline(metadata));
-          }
+          block.metadataInlines.forEach(countSpans);
         case HeadingBlock():
           countSpans(block.spans);
         case ParagraphBlock():
@@ -2280,7 +3112,7 @@ int _matchingEnvEnd(String text, String name, int from) {
 /// Verbatim-like environments whose body is displayed as code: `%` is a
 /// literal character in there, never a comment marker.
 final _verbatimEnvironmentRe = RegExp(
-  r'\\(begin|end)\{(lstlisting|verbatim|Verbatim|minted)\}',
+  r'\\(begin|end)\{(lstlisting|verbatim|Verbatim|minted|alltt|PGtext)\}',
 );
 
 /// Cuts each line at its first unescaped `%` (escaped means preceded by an
@@ -2307,17 +3139,24 @@ final _verbatimEnvironmentRe = RegExp(
     final newlineIdx = text.indexOf('\n', lineStart);
     final lineEnd = newlineIdx >= 0 ? newlineIdx : text.length;
     final line = text.substring(lineStart, lineEnd);
-    final verbatimMarker = _verbatimEnvironmentRe.firstMatch(line);
-    final endsVerbatim = inVerbatim && verbatimMarker?.group(1) == 'end';
+    final lineInVerbatim = inVerbatim;
+    final endsVerbatim =
+        inVerbatim &&
+        _verbatimEnvironmentRe.allMatches(line).any((m) => m.group(1) == 'end');
     var cut = -1;
     if (!inVerbatim || endsVerbatim) {
       // \url/\href/\path read their argument with verbatim-like catcodes in
       // real LaTeX: a % in there (percent-encoded URLs) is a literal
-      // character, not a comment.
+      // character, not a comment. \verb reads up to its delimiter the same
+      // way.
       final protected = <(int, int)>[];
       for (final m in RegExp(r'\\(?:url|href|path)\s*\{').allMatches(line)) {
         final arg = _balancedArg(line, m.end - 1);
         if (arg != null) protected.add((m.end, arg.$2));
+      }
+      for (final m in RegExp(r'\\verb\*?([^a-zA-Z\s])').allMatches(line)) {
+        final close = line.indexOf(m.group(1)!, m.end);
+        if (close > 0) protected.add((m.end, close));
       }
       for (var i = 0; i < line.length; i++) {
         if (line[i] != '%') continue;
@@ -2335,8 +3174,13 @@ final _verbatimEnvironmentRe = RegExp(
     }
     if (endsVerbatim) {
       inVerbatim = false;
-    } else if (!inVerbatim && verbatimMarker?.group(1) == 'begin') {
-      inVerbatim = true;
+    } else if (!inVerbatim) {
+      // A marker after the comment cut is commented out. A \begin and \end
+      // on one line open and close the environment on that line.
+      for (final m in _verbatimEnvironmentRe.allMatches(line)) {
+        if (!inVerbatim && cut >= 0 && m.start >= cut) break;
+        inVerbatim = m.group(1) == 'begin';
+      }
     }
     final stripped = cut < 0 ? line : line.substring(0, cut);
     final commentOnly = cut >= 0 && stripped.trim().isEmpty;
@@ -2345,9 +3189,19 @@ final _verbatimEnvironmentRe = RegExp(
         out.write('\n');
         outMap.add(map[prevNewline]);
       }
+      // TeX skips a line's leading blanks; after a %-ended line nothing
+      // else separates the two, so the indentation must not run into the
+      // text ("foo%" then "  bar" reads "foobar").
+      var skip = 0;
+      if (!first && joinNextLine && !lineInVerbatim) {
+        while (skip < stripped.length &&
+            (stripped[skip] == ' ' || stripped[skip] == '\t')) {
+          skip++;
+        }
+      }
       first = false;
-      out.write(stripped);
-      for (var k = 0; k < stripped.length; k++) {
+      out.write(stripped.substring(skip));
+      for (var k = skip; k < stripped.length; k++) {
         outMap.add(map[lineStart + k]);
       }
       prevNewline = lineEnd;
@@ -2395,6 +3249,26 @@ final _verbatimEnvironmentRe = RegExp(
   return null;
 }
 
+/// Index of the `]` that closes an optional argument, searching from [from]
+/// and skipping any `]` inside a brace group (`[{a]b}]`) or escaped with a
+/// backslash. Returns -1 when none closes at brace depth 0.
+int _closeBracket(String text, int from) {
+  var depth = 0;
+  for (var i = from; i < text.length; i++) {
+    switch (text.codeUnitAt(i)) {
+      case 0x5C: // backslash: the next character is literal
+        i++;
+      case 0x7B:
+        depth++;
+      case 0x7D:
+        if (depth > 0) depth--;
+      case 0x5D when depth == 0:
+        return i;
+    }
+  }
+  return -1;
+}
+
 /// Drops an `\item[label]` optional argument from the start of an item
 /// segment, returning the remainder, how many characters were dropped, and
 /// the label text itself (null when there was none).
@@ -2402,7 +3276,7 @@ final _verbatimEnvironmentRe = RegExp(
   final leading = segment.length - segment.trimLeft().length;
   final trimmed = segment.substring(leading);
   if (!trimmed.startsWith('[')) return (segment, 0, null);
-  final close = trimmed.indexOf(']');
+  final close = _closeBracket(trimmed, 0);
   if (close < 0) return (segment, 0, null);
   return (
     trimmed.substring(close + 1),
@@ -2456,9 +3330,15 @@ String extractMacroPreamble(String source) {
   final normalized = _normalizeLineEndings(source);
   final text = _stripComments(normalized.text, normalized.map).text;
 
-  final definitions = StringBuffer();
+  // Each statement keyed by where it starts, so the two kinds below come
+  // out in source order.
+  final statements = <(int, String)>[];
   for (final match in _macroDefKeyword.allMatches(text)) {
     final keyword = match.group(1)!;
+    final parsed = keyword.endsWith('def')
+        ? _parseDefDeclaration(text, match.end)
+        : _parseNewcommandDeclaration(text, match.end, rejectDefaultArg: true);
+    if (parsed == null) continue;
     final end = keyword.endsWith('def')
         ? _readDefEnd(text, match.end)
         : _readNewcommandEnd(text, match.end);
@@ -2466,13 +3346,37 @@ String extractMacroPreamble(String source) {
     final rewritten = keyword == 'newcommand' || keyword == 'renewcommand'
         ? r'\providecommand'
         : '\\$keyword';
-    definitions
-      ..write(rewritten)
-      ..write(text.substring(match.end, end))
-      ..write('\n');
+    statements.add((
+      match.start,
+      '$rewritten${text.substring(match.end, end)}',
+    ));
   }
-  return definitions.toString();
+  // amsmath's \DeclareMathOperator{\name}{text} has no RaTeX counterpart;
+  // the macro it defines is \operatorname{text} (starred: with limits).
+  for (final match in _declareMathOperator.allMatches(text)) {
+    final nameStart = _skipSpaces(text, match.end);
+    final nameEnd = _readMacroName(text, nameStart);
+    if (nameEnd == null) continue;
+    var name = text.substring(nameStart, nameEnd);
+    if (name.startsWith('{')) name = name.substring(1, name.length - 1).trim();
+    if (!name.startsWith(r'\')) continue;
+    final bodyStart = _skipSpaces(text, nameEnd);
+    if (bodyStart >= text.length || text[bodyStart] != '{') continue;
+    final body = _balancedArg(text, bodyStart);
+    if (body == null) continue;
+    final operator = match.group(1) == '*'
+        ? r'\operatorname*'
+        : r'\operatorname';
+    statements.add((
+      match.start,
+      '\\providecommand{$name}{$operator{${body.$1}}}',
+    ));
+  }
+  statements.sort((a, b) => a.$1.compareTo(b.$1));
+  return [for (final (_, statement) in statements) '$statement\n'].join();
 }
+
+final _declareMathOperator = RegExp(r'\\DeclareMathOperator(\*?)');
 
 /// Index just past a `\newcommand`-family declaration's body, given [from]
 /// just after the keyword (`\newcommand`, `\renewcommand`, ...); null when
@@ -2486,7 +3390,7 @@ int? _readNewcommandEnd(String text, int from) {
   // Up to two optional `[...]` groups: argument count and a default value
   // for the first argument.
   for (var group = 0; group < 2 && i < text.length && text[i] == '['; group++) {
-    final close = text.indexOf(']', i);
+    final close = _closeBracket(text, i);
     if (close < 0) return null;
     i = _skipSpaces(text, close + 1);
   }
@@ -2599,6 +3503,107 @@ class MacroDefinition {
   final String body;
 }
 
+/// Distributed Proofreaders / Project Gutenberg macros that are handled
+/// natively by [_normalizeDpProse], [_normalizeDpMath], [_BlockParser], or
+/// [parseInline] so preamble redefinitions (including conditional
+/// `\ifthenelse{\boolean{Modernize}}` branches) never clobber source maps or
+/// leak raw layout TeX.
+const _dpBuiltinMacros = {
+  'DPtypo',
+  'DPchg',
+  'DPmod',
+  'DPnote',
+  'DPPageSep',
+  'Pagelabel',
+  'PageLabel',
+  'PageSep',
+  'ResetCols',
+  'First',
+  'Inum',
+  'Add',
+  'Eq',
+  'NoSub',
+  'DELTA',
+  'EPSILON',
+  'Tag',
+  'lintertext',
+  'rintertext',
+  'intertext',
+  'shortintertext',
+  'Chapter',
+  'AltChapter',
+  'ChapterStar',
+  'Section',
+  'Subsection',
+  'Note',
+  'Exercises',
+  'Exercise',
+  'exhead',
+  'exheadin',
+  'Paragraph',
+  'Topic',
+  'Item',
+  'Itemp',
+  'SubItem',
+  'Example',
+  'Case',
+  'Defn',
+  'Dictum',
+  'Emph',
+  'Title',
+  'Book',
+  'Author',
+  'Ans',
+  'Par',
+  'Loosen',
+  'loosen',
+  'tb',
+  'Strut',
+  'DStrut',
+  'Pause',
+  'BookMark',
+  'mybook',
+  'myprop',
+  'mypropl',
+  'mypropflow',
+  'mypropflot',
+  'ie',
+  'Ie',
+  'IE',
+  'eg',
+  'cf',
+  'NB',
+  'HCF',
+  'LCM',
+  'LCD',
+  'pgram',
+};
+
+final _unportableMacroBodyRe = RegExp(
+  r'\\(ifthenelse|boolean|newboolean|setboolean|ifx|ifnum|ifdim|ifmmode|csname|endcsname'
+  r'|chapter|section|subsection|subsubsection|paragraph|subparagraph'
+  r'|clearpage|cleardoublepage|newpage|pagebreak|nopagebreak|linebreak'
+  r'|fancyhead|fancyfoot|thispagestyle|pagestyle|markboth|markright'
+  r'|addtocontents|addcontentsline|pdfbookmark|hypertarget|hyperlink'
+  r'|settowidth|settoheight|settodepth|setlength|addtolength'
+  r'|setcounter|addtocounter|stepcounter|refstepcounter|newcounter'
+  r'|newenvironment|renewenvironment|newtheorem'
+  r'|makebox|framebox|parbox|raisebox|rule|vspace|hspace|hfill|vfill|dotfill'
+  r'|includegraphics|begin|end|item|caption|label|footnote|footnotemark|footnotetext'
+  r'|noindent|indent|par|smallskip|medskip|bigskip|enlargethispage|needspace|Needspace)(?![a-zA-Z])',
+);
+
+bool _isUnportableMacro(
+  String name,
+  String body, {
+  bool hasDefaultArg = false,
+}) {
+  if (hasDefaultArg || name.isEmpty) return true;
+  if (name.contains('@') || body.contains('@')) return true;
+  if (_dpBuiltinMacros.contains(name)) return true;
+  return _unportableMacroBodyRe.hasMatch(body);
+}
+
 /// Every macro declared anywhere in [text] (already comment-stripped), in
 /// source order — later declarations of the same name win, matching how
 /// [extractMacroPreamble] normalizes redefinition to `\providecommand`.
@@ -2614,24 +3619,39 @@ Map<String, MacroDefinition> _parseMacroDefs(String text) {
   return defs;
 }
 
-MacroDefinition? _parseNewcommandDeclaration(String text, int from) {
+MacroDefinition? _parseNewcommandDeclaration(
+  String text,
+  int from, {
+  bool rejectDefaultArg = false,
+}) {
   var i = _skipSpaces(text, from);
   if (i < text.length && text[i] == '*') i = _skipSpaces(text, i + 1);
   final name = _readMacroNameSpan(text, i);
   if (name == null) return null;
   i = _skipSpaces(text, name.$2);
   var argCount = 0;
+  var hasDefaultArg = false;
   for (var group = 0; group < 2 && i < text.length && text[i] == '['; group++) {
-    final close = text.indexOf(']', i);
+    final close = _closeBracket(text, i);
     if (close < 0) return null;
     if (group == 0) {
       argCount = int.tryParse(text.substring(i + 1, close).trim()) ?? 0;
+    } else {
+      hasDefaultArg = true;
     }
     i = _skipSpaces(text, close + 1);
   }
   if (i >= text.length || text[i] != '{') return null;
   final body = _balancedArg(text, i);
-  return body == null ? null : MacroDefinition(name.$1, argCount, body.$1);
+  if (body == null) return null;
+  if (_isUnportableMacro(
+    name.$1,
+    body.$1,
+    hasDefaultArg: rejectDefaultArg && hasDefaultArg,
+  )) {
+    return null;
+  }
+  return MacroDefinition(name.$1, argCount, body.$1);
 }
 
 MacroDefinition? _parseDefDeclaration(String text, int from) {
@@ -2649,7 +3669,8 @@ MacroDefinition? _parseDefDeclaration(String text, int from) {
   }
   if (i >= text.length) return null;
   final body = _balancedArg(text, i);
-  return body == null ? null : MacroDefinition(name.$1, argCount, body.$1);
+  if (body == null || _isUnportableMacro(name.$1, body.$1)) return null;
+  return MacroDefinition(name.$1, argCount, body.$1);
 }
 
 /// Like [_readMacroName], but also returns the name itself (without its
@@ -2755,4 +3776,485 @@ String _expandTextMacros(
   }
   final result = out.toString();
   return changed ? _expandTextMacros(result, macros, depth + 1) : result;
+}
+
+/// [latex] with the Distributed Proofreaders / Project Gutenberg macros of the
+/// shared compat table (and the other DP math conventions) normalized, as
+/// formulas are before they reach ratex.
+String normalizeCompatMath(String latex) => _normalizeDpMath(latex, null).latex;
+
+/// [text] with the prose and editorial DP macros normalized, as paragraph
+/// text is before it is parsed.
+String normalizeCompatProse(String text) => _normalizeDpProse(text, null).text;
+
+/// One piece of an expanded compat macro: literal text, or the argument
+/// source span `[start, end)` that is normalized and kept.
+typedef _CompatPiece = ({String? literal, int start, int end});
+
+/// Expands [macro], whose control word ends at [wordEnd] in [source], into
+/// pieces, so callers can keep their source maps 1:1 (the literal text maps to
+/// the command, the arguments to themselves). Null when its arguments are not
+/// all braced groups, in which case the text is left for ratex's own macro.
+({int end, List<_CompatPiece> pieces})? _expandCompatMacro(
+  CompatMacro macro,
+  String source,
+  int wordEnd,
+) {
+  final rename = macro.rename;
+  if (macro.arity == 0 || rename != null) {
+    return (
+      end: wordEnd,
+      pieces: [(literal: rename ?? macro.template, start: 0, end: 0)],
+    );
+  }
+  var at = wordEnd;
+  if (macro.optional) {
+    at = _skipSpaces(source, at);
+    if (at < source.length && source[at] == '[') {
+      final close = _closeBracket(source, at);
+      if (close > at) at = close + 1;
+    }
+  }
+  final args = <(int, int)>[];
+  for (var k = 0; k < macro.arity; k++) {
+    at = _skipSpaces(source, at);
+    final arg = at < source.length && source[at] == '{'
+        ? _balancedArg(source, at)
+        : null;
+    if (arg == null) return null;
+    args.add((at + 1, at + 1 + arg.$1.length));
+    at = arg.$2;
+  }
+  final pieces = <_CompatPiece>[];
+  final literal = StringBuffer();
+  void flush() {
+    if (literal.isEmpty) return;
+    pieces.add((literal: literal.toString(), start: 0, end: 0));
+    literal.clear();
+  }
+
+  final template = macro.template;
+  for (var k = 0; k < template.length; k++) {
+    final digit = template[k] == '#' && k + 1 < template.length
+        ? int.tryParse(template[k + 1])
+        : null;
+    if (digit != null && digit >= 1 && digit <= macro.arity) {
+      flush();
+      final (start, end) = args[digit - 1];
+      pieces.add((literal: null, start: start, end: end));
+      k++;
+    } else {
+      literal.write(template[k]);
+    }
+  }
+  flush();
+  return (end: at, pieces: pieces);
+}
+
+/// Normalizes Project Gutenberg / Distributed Proofreaders editorial,
+/// drop-cap, and page-marker commands in prose (and embedded inline math)
+/// while keeping [map] 1:1 aligned with [source] so formula source spans stay
+/// exact.
+({String text, List<int>? map}) _normalizeDpProse(
+  String source,
+  List<int>? map,
+) {
+  if (!source.contains(r'\')) return (text: source, map: map);
+  final out = StringBuffer();
+  final outMap = map == null ? null : <int>[];
+
+  void writeSynthetic(String replacement, int sourceIndex) {
+    out.write(replacement);
+    if (outMap != null && map != null) {
+      for (var k = 0; k < replacement.length; k++) {
+        outMap.add(map[sourceIndex]);
+      }
+    }
+  }
+
+  void copyRange(int start, int end) {
+    out.write(source.substring(start, end));
+    if (outMap != null && map != null) {
+      for (var k = start; k < end; k++) {
+        outMap.add(map[k]);
+      }
+    }
+  }
+
+  void appendNormalized(String slice, List<int>? sliceMap) {
+    final norm = _normalizeDpProse(slice, sliceMap);
+    out.write(norm.text);
+    if (outMap != null && norm.map != null) {
+      outMap.addAll(norm.map!);
+    }
+  }
+
+  var i = 0;
+  while (i < source.length) {
+    if (source[i] != r'\') {
+      out.write(source[i]);
+      outMap?.add(map![i]);
+      i++;
+      continue;
+    }
+    if (i + 1 < source.length && !_isAsciiLetter(source[i + 1])) {
+      copyRange(i, i + 2);
+      i += 2;
+      continue;
+    }
+    final word = RegExp(r'[a-zA-Z]+').matchAsPrefix(source, i + 1)?.group(0);
+    if (word == null) {
+      out.write(source[i]);
+      outMap?.add(map![i]);
+      i++;
+      continue;
+    }
+    final wordEnd = i + 1 + word.length;
+    final cmdSource = i;
+
+    // Distributed Proofreaders / Project Gutenberg macros from the shared
+    // compat_macros.json table (editorial markup, \First, \efrac, \ds, ...).
+    final compat = compatMacros[word];
+    if (compat != null && compat.category != 'math') {
+      final expansion = _expandCompatMacro(compat, source, wordEnd);
+      if (expansion != null) {
+        for (final piece in expansion.pieces) {
+          final literal = piece.literal;
+          if (literal != null) {
+            writeSynthetic(literal, cmdSource);
+          } else {
+            appendNormalized(
+              source.substring(piece.start, piece.end),
+              map?.sublist(piece.start, piece.end),
+            );
+          }
+        }
+        i = expansion.end;
+        continue;
+      }
+    }
+
+    // DP style commands that accept an optional [short] argument before {text}:
+    // strip the [short] group so parseInline's styles table matches \Cmd{text}.
+    if (const {
+      'Paragraph',
+      'Topic',
+      'Item',
+      'Itemp',
+      'SubItem',
+      'Example',
+      'Case',
+      'Defn',
+      'Dictum',
+      'Emph',
+    }.contains(word)) {
+      final optAt = _skipSpaces(source, wordEnd);
+      if (optAt < source.length && source[optAt] == '[') {
+        final close = _closeBracket(source, optAt);
+        if (close > optAt) {
+          final braceAt = _skipSpaces(source, close + 1);
+          if (braceAt < source.length && source[braceAt] == '{') {
+            copyRange(i, wordEnd);
+            i = braceAt;
+            continue;
+          }
+        }
+      }
+    }
+
+    // Wrapper macros that are not in the shared table: \Eq{X}, \NoSub{X} -> X.
+    if (const {'Eq', 'NoSub'}.contains(word)) {
+      var at = _skipSpaces(source, wordEnd);
+      if (at < source.length && source[at] == '[') {
+        final close = _closeBracket(source, at);
+        if (close > at) at = _skipSpaces(source, close + 1);
+      }
+      final arg = at < source.length && source[at] == '{'
+          ? _balancedArg(source, at)
+          : null;
+      if (arg != null) {
+        final sliceStart = at + 1;
+        appendNormalized(
+          arg.$1,
+          map?.sublist(sliceStart, sliceStart + arg.$1.length),
+        );
+        i = arg.$2;
+        continue;
+      }
+    }
+
+    copyRange(i, wordEnd);
+    i = wordEnd;
+  }
+
+  return (text: out.toString(), map: outMap);
+}
+
+/// Normalizes Project Gutenberg / Distributed Proofreaders math conventions
+/// inside inline and display formulas while preserving [map] 1:1 with [latex]:
+/// * the macros of the shared `compat_macros.json` table (see
+///   `compat_macros.g.dart`): `\DPtypo{orig}{corr}` -> `corr`, `\efrac` ->
+///   `\frac`, `\ds` -> `\displaystyle`, `\DPnote{...}` -> ``, ...
+/// * `\Eq{X}`, `\NoSub{X}`, `\rlap{X}`, `\llap{X}` -> `X`
+/// * `\Par{X}` -> `(X)`
+/// * `\lintertext{...}`, `\rintertext{...}`, `\intertext{...}`,
+///   `\shortintertext{...}`, `\Tag{...}`, and `\displaybreak[...]`
+({String latex, List<int>? map}) _normalizeDpMath(
+  String latex,
+  List<int>? map,
+) {
+  assert(
+    map == null || map.length == latex.length,
+    'map must align 1:1 with latex',
+  );
+  if (!latex.contains(r'\')) return (latex: latex, map: map);
+
+  final out = StringBuffer();
+  final outMap = map == null ? null : <int>[];
+
+  void writeSynthetic(String replacement, int sourceIndex) {
+    out.write(replacement);
+    if (outMap != null) {
+      for (var k = 0; k < replacement.length; k++) {
+        outMap.add(sourceIndex);
+      }
+    }
+  }
+
+  void copyRange(int start, int end) {
+    out.write(latex.substring(start, end));
+    if (outMap != null && map != null) {
+      for (var k = start; k < end; k++) {
+        outMap.add(map[k]);
+      }
+    }
+  }
+
+  void appendNormalized(String slice, List<int>? sliceMap) {
+    final norm = _normalizeDpMath(slice, sliceMap);
+    out.write(norm.latex);
+    if (outMap != null && norm.map != null) {
+      outMap.addAll(norm.map!);
+    }
+  }
+
+  // Emits a \text{...} run for \intertext/\lintertext/\rintertext/\Tag,
+  // splitting any embedded $...$ math back out of \text{...} so RaTeX never
+  // sees a '$' inside text mode.
+  void emitIntertextRun(
+    String content,
+    List<int>? contentMap,
+    int openSource,
+    int closeSource,
+  ) {
+    final normalized = _normalizeDpMath(content, contentMap);
+    final text = normalized.latex;
+    final textMap = normalized.map;
+    writeSynthetic(r'\text{', openSource);
+    var inMath = false;
+    var k = 0;
+    while (k < text.length) {
+      if (text[k] == r'\' && k + 1 < text.length && text[k + 1] == r'$') {
+        out.write(r'\$');
+        if (outMap != null && textMap != null) {
+          outMap
+            ..add(textMap[k])
+            ..add(textMap[k + 1]);
+        }
+        k += 2;
+        continue;
+      }
+      if (text[k] == r'$') {
+        final src = textMap == null ? openSource : textMap[k];
+        if (!inMath) {
+          writeSynthetic('}', src);
+          inMath = true;
+        } else {
+          writeSynthetic(r'\text{', src);
+          inMath = false;
+        }
+        k++;
+        continue;
+      }
+      out.write(text[k]);
+      if (outMap != null && textMap != null) {
+        outMap.add(textMap[k]);
+      }
+      k++;
+    }
+    if (!inMath) {
+      writeSynthetic('}', closeSource);
+    }
+  }
+
+  var i = 0;
+  while (i < latex.length) {
+    if (latex[i] != r'\') {
+      out.write(latex[i]);
+      outMap?.add(map![i]);
+      i++;
+      continue;
+    }
+    if (i + 1 < latex.length && !_isAsciiLetter(latex[i + 1])) {
+      copyRange(i, i + 2);
+      i += 2;
+      continue;
+    }
+    final word = RegExp(r'[a-zA-Z]+').matchAsPrefix(latex, i + 1)?.group(0);
+    if (word == null) {
+      out.write(latex[i]);
+      outMap?.add(map![i]);
+      i++;
+      continue;
+    }
+    final wordEnd = i + 1 + word.length;
+    final cmdSource = map == null ? 0 : map[i];
+
+    // Distributed Proofreaders / Project Gutenberg macros from the shared
+    // compat_macros.json table (editorial markup, \First, \efrac, \ds, ...).
+    final compat = compatMacros[word];
+    if (compat != null) {
+      final expansion = _expandCompatMacro(compat, latex, wordEnd);
+      if (expansion != null) {
+        for (final piece in expansion.pieces) {
+          final literal = piece.literal;
+          if (literal != null) {
+            writeSynthetic(literal, cmdSource);
+          } else {
+            appendNormalized(
+              latex.substring(piece.start, piece.end),
+              map?.sublist(piece.start, piece.end),
+            );
+          }
+        }
+        i = expansion.end;
+        continue;
+      }
+    }
+
+    // Single-argument wrapper macros that are not in the shared table:
+    // \Eq{X}, \NoSub{X}, \rlap{X}, \llap{X}, \clap{X}, \smash{X} -> X.
+    if (const {'Eq', 'NoSub', 'rlap', 'llap', 'clap', 'smash'}.contains(word)) {
+      var at = _skipSpaces(latex, wordEnd);
+      if (at < latex.length && latex[at] == '[') {
+        final close = _closeBracket(latex, at);
+        if (close > at) at = _skipSpaces(latex, close + 1);
+      }
+      final arg = at < latex.length && latex[at] == '{'
+          ? _balancedArg(latex, at)
+          : null;
+      if (arg != null) {
+        final sliceStart = at + 1;
+        appendNormalized(
+          arg.$1,
+          map?.sublist(sliceStart, sliceStart + arg.$1.length),
+        );
+        i = arg.$2;
+        continue;
+      }
+    }
+
+    // Wentworth's \Par{X} -> (X).
+    if (word == 'Par') {
+      final at = _skipSpaces(latex, wordEnd);
+      final arg = at < latex.length && latex[at] == '{'
+          ? _balancedArg(latex, at)
+          : null;
+      if (arg != null) {
+        final sliceStart = at + 1;
+        writeSynthetic('(', cmdSource);
+        appendNormalized(
+          arg.$1,
+          map?.sublist(sliceStart, sliceStart + arg.$1.length),
+        );
+        writeSynthetic(')', map == null ? 0 : map[arg.$2 - 1]);
+        i = arg.$2;
+        continue;
+      }
+    }
+
+    // Zero-output math spacing/break hints (with optional [...] group).
+    if (const {
+      'displaybreak',
+      'allowdisplaybreaks',
+      'Pause',
+      'Strut',
+      'DStrut',
+      'tb',
+      'noindent',
+      'indent',
+    }.contains(word)) {
+      var at = wordEnd;
+      final optAt = _skipSpaces(latex, at);
+      if (optAt < latex.length && latex[optAt] == '[') {
+        final close = _closeBracket(latex, optAt);
+        if (close > optAt) at = close + 1;
+      }
+      if (word == 'noindent' || word == 'indent') {
+        at = _skipSpaces(latex, at);
+      }
+      i = at;
+      continue;
+    }
+
+    // Intertext and equation-tag commands in DPalign* / DPgather* / align*.
+    if (const {
+      'lintertext',
+      'rintertext',
+      'intertext',
+      'shortintertext',
+      'Tag',
+    }.contains(word)) {
+      var at = wordEnd;
+      if (at < latex.length && latex[at] == '*') at++;
+      at = _skipSpaces(latex, at);
+      if (at < latex.length && latex[at] == '[') {
+        final close = _closeBracket(latex, at);
+        if (close > at) at = _skipSpaces(latex, close + 1);
+      }
+      final arg = at < latex.length && latex[at] == '{'
+          ? _balancedArg(latex, at)
+          : null;
+      if (arg != null) {
+        final sliceStart = at + 1;
+        final closeSource = map == null ? 0 : map[arg.$2 - 1];
+        if (word == 'lintertext') {
+          emitIntertextRun(
+            arg.$1,
+            map?.sublist(sliceStart, sliceStart + arg.$1.length),
+            cmdSource,
+            closeSource,
+          );
+          writeSynthetic(r'\quad ', closeSource);
+        } else if (word == 'rintertext' || word == 'Tag') {
+          writeSynthetic(r'\quad', cmdSource);
+          emitIntertextRun(
+            arg.$1,
+            map?.sublist(sliceStart, sliceStart + arg.$1.length),
+            cmdSource,
+            closeSource,
+          );
+        } else {
+          final preceding = out.toString().trimRight();
+          if (preceding.isNotEmpty && !preceding.endsWith(r'\\')) {
+            writeSynthetic(r'\\ ', cmdSource);
+          }
+          emitIntertextRun(
+            arg.$1,
+            map?.sublist(sliceStart, sliceStart + arg.$1.length),
+            cmdSource,
+            closeSource,
+          );
+          writeSynthetic(r' \\', closeSource);
+        }
+        i = arg.$2;
+        continue;
+      }
+    }
+
+    copyRange(i, wordEnd);
+    i = wordEnd;
+  }
+
+  return (latex: out.toString(), map: outMap);
 }

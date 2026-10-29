@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:manyui/manyui.dart';
-import 'package:ratex_flutter/ratex_flutter.dart';
+import 'package:ratex/ratex.dart';
 
 import 'branding.dart';
 import 'document_browser.dart';
@@ -101,9 +101,12 @@ class _EditorPageState extends State<EditorPage>
   late ManyMathDocument _document;
   late final TextEditingController _source;
   final FocusNode _sourceFocus = FocusNode(debugLabel: 'LaTeX source editor');
+
+  /// Replaced on every document switch: EditableText keeps its undo history
+  /// in its own state, and a global key would carry that element, and so the
+  /// previous document's undo stack, across the switch.
   @override
-  final GlobalKey<EditableTextState> editableTextKey =
-      GlobalKey<EditableTextState>();
+  GlobalKey<EditableTextState> editableTextKey = GlobalKey<EditableTextState>();
   @override
   bool get forcePressEnabled => false;
   @override
@@ -122,6 +125,10 @@ class _EditorPageState extends State<EditorPage>
   bool _changesPending = false;
   bool _documentsVisible = true;
   bool _problemsExpanded = false;
+
+  /// Problems the last completed render found; edits clear [_issues] (their
+  /// offsets go stale) but not this.
+  int _renderedIssueCount = 0;
   bool _saving = false;
   bool _printing = false;
   String? _engineError;
@@ -142,11 +149,22 @@ class _EditorPageState extends State<EditorPage>
 
   DocumentStore get store => widget.store;
 
+  /// Whether the Documents pane is part of the current layout; recorded by
+  /// the layout builder so maximizing only folds panes that are shown.
+  bool _documentsShown = true;
+
+  /// The Documents pane state to return to when a maximized pane restores.
+  bool? _documentsMinimizedBeforeMaximize;
+
   bool get _previewMaximized =>
-      _documentsMinimized && _sourceMinimized && !_previewMinimized;
+      (!_documentsShown || _documentsMinimized) &&
+      _sourceMinimized &&
+      !_previewMinimized;
 
   bool get _sourceMaximized =>
-      _documentsMinimized && _previewMinimized && !_sourceMinimized;
+      (!_documentsShown || _documentsMinimized) &&
+      _previewMinimized &&
+      !_sourceMinimized;
 
   @override
   void initState() {
@@ -160,6 +178,12 @@ class _EditorPageState extends State<EditorPage>
     store.lastOpenedId = _document.id;
     _source = TextEditingController(text: _document.source);
     store.onPersistError = _handlePersistError;
+    final loadError = store.takeLoadError();
+    if (loadError != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _handlePersistError(loadError, StackTrace.empty),
+      );
+    }
     if (!widget.persistentStorage) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -231,7 +255,6 @@ class _EditorPageState extends State<EditorPage>
     setState(() {
       _changesPending = true;
       _issues = const <FormulaIssue>[];
-      _problemsExpanded = false;
       _saving = true;
       _saveError = null;
     });
@@ -308,7 +331,15 @@ class _EditorPageState extends State<EditorPage>
     }
     stopwatch.stop();
     setState(() {
-      if (issues.isNotEmpty && _issues.isEmpty) _problemsExpanded = true;
+      // Open the panel when problems appear and close it when they are
+      // gone, but leave it as the reader set it while problems persist
+      // across renders.
+      if (issues.isEmpty) {
+        _problemsExpanded = false;
+      } else if (_renderedIssueCount == 0) {
+        _problemsExpanded = true;
+      }
+      _renderedIssueCount = issues.length;
       _blocks = parsed.blocks;
       _macroPreamble = parsed.macroPreamble;
       _issues = issues;
@@ -337,6 +368,18 @@ class _EditorPageState extends State<EditorPage>
     setState(() => _compactSurface = EditorSurface.source);
     _source.selection = TextSelection(baseOffset: start, extentOffset: end);
     _sourceFocus.requestFocus();
+    // A programmatic selection change does not reveal the caret on its own.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _source.selection.start != start) return;
+      editableTextKey.currentState?.bringIntoView(TextPosition(offset: start));
+    });
+  }
+
+  /// Formatting shortcuts edit the source only while it has focus; with the
+  /// source minimized, or behind the compact preview, they would otherwise
+  /// change text the reader cannot see.
+  void _applySnippetShortcut(Snippet snippet) {
+    if (_sourceFocus.hasFocus) _applySnippet(snippet);
   }
 
   void _applySnippet(Snippet snippet) {
@@ -356,7 +399,12 @@ class _EditorPageState extends State<EditorPage>
   }
 
   void _setZoom(double next) {
-    setState(() => _previewZoom = next.clamp(minPreviewZoom, maxPreviewZoom));
+    // Steps of 0.1 accumulate float error (0.7000000000000001), which would
+    // leave the limit button enabled for one dead tap.
+    final rounded = (next * 10).roundToDouble() / 10;
+    setState(
+      () => _previewZoom = rounded.clamp(minPreviewZoom, maxPreviewZoom),
+    );
   }
 
   void _selectDocument(ManyMathDocument document) {
@@ -364,11 +412,13 @@ class _EditorPageState extends State<EditorPage>
     store.updateSource(_document.id, _source.text);
     setState(() {
       _document = document;
+      editableTextKey = GlobalKey<EditableTextState>();
       _source.value = TextEditingValue(
         text: document.source,
         selection: const TextSelection.collapsed(offset: 0),
       );
       _issues = const <FormulaIssue>[];
+      _renderedIssueCount = 0;
       _changesPending = false;
       _saving = false;
       _saveError = null;
@@ -563,7 +613,7 @@ class _EditorPageState extends State<EditorPage>
         blocks: _blocks,
         pageSize: _pageSize,
         formulaSvgs: formulaSvgs,
-        fontBaseUrl: Uri.base.resolve('assets/fonts/').toString(),
+        fontBaseUrl: printFontBaseUrl(),
       );
       openPrintWindow(html);
       if (!mounted) return;
@@ -691,24 +741,18 @@ class _EditorPageState extends State<EditorPage>
         const SingleActivator(LogicalKeyboardKey.keyS, meta: true): () {
           unawaited(_saveNow());
         },
-        const SingleActivator(LogicalKeyboardKey.keyB, control: true): () {
-          _applySnippet(snippetBold);
-        },
-        const SingleActivator(LogicalKeyboardKey.keyB, meta: true): () {
-          _applySnippet(snippetBold);
-        },
-        const SingleActivator(LogicalKeyboardKey.keyI, control: true): () {
-          _applySnippet(snippetItalic);
-        },
-        const SingleActivator(LogicalKeyboardKey.keyI, meta: true): () {
-          _applySnippet(snippetItalic);
-        },
-        const SingleActivator(LogicalKeyboardKey.keyM, control: true): () {
-          _applySnippet(snippetInlineMath);
-        },
-        const SingleActivator(LogicalKeyboardKey.keyM, meta: true): () {
-          _applySnippet(snippetInlineMath);
-        },
+        const SingleActivator(LogicalKeyboardKey.keyB, control: true): () =>
+            _applySnippetShortcut(snippetBold),
+        const SingleActivator(LogicalKeyboardKey.keyB, meta: true): () =>
+            _applySnippetShortcut(snippetBold),
+        const SingleActivator(LogicalKeyboardKey.keyI, control: true): () =>
+            _applySnippetShortcut(snippetItalic),
+        const SingleActivator(LogicalKeyboardKey.keyI, meta: true): () =>
+            _applySnippetShortcut(snippetItalic),
+        const SingleActivator(LogicalKeyboardKey.keyM, control: true): () =>
+            _applySnippetShortcut(snippetInlineMath),
+        const SingleActivator(LogicalKeyboardKey.keyM, meta: true): () =>
+            _applySnippetShortcut(snippetInlineMath),
       },
       child: Focus(
         autofocus: true,
@@ -793,7 +837,9 @@ class _EditorPageState extends State<EditorPage>
               final showDocuments =
                   constraints.maxWidth >= documentBrowserBreakpoint &&
                   _documentsVisible;
-              final workspace = constraints.maxWidth < editorCompactBreakpoint
+              _documentsShown = showDocuments;
+              final compact = constraints.maxWidth < editorCompactBreakpoint;
+              final workspace = compact
                   ? _buildCompactWorkspace()
                   : _buildSplitWorkspace();
               if (!showDocuments) {
@@ -848,7 +894,9 @@ class _EditorPageState extends State<EditorPage>
           ),
           footer: _StatusBar(
             counts: _counts,
-            characterCount: _source.text.length,
+            // Characters as readers count them, not UTF-16 units: an emoji
+            // or a math alphanumeric is one.
+            characterCount: _source.text.runes.length,
             renderMilliseconds: _lastRenderMilliseconds,
             saving: _saving,
             saveError: _saveError,
@@ -874,9 +922,15 @@ class _EditorPageState extends State<EditorPage>
             value: _compactSurface,
             fullWidth: true,
             onChanged: (value) => setState(() => _compactSurface = value),
-            items: const <MSegmentedItem<EditorSurface>>[
-              MSegmentedItem(value: EditorSurface.source, label: 'Source'),
-              MSegmentedItem(value: EditorSurface.preview, label: 'Preview'),
+            items: <MSegmentedItem<EditorSurface>>[
+              const MSegmentedItem(
+                value: EditorSurface.source,
+                label: 'Source',
+              ),
+              const MSegmentedItem(
+                value: EditorSurface.preview,
+                label: 'Preview',
+              ),
             ],
           ),
         ),
@@ -1105,8 +1159,7 @@ class _EditorPageState extends State<EditorPage>
           setState(() => _previewFontFamily = value),
       previewLayout: _previewLayout,
       pageSize: _pageSize,
-      onPreviewLayoutChanged: (value) =>
-          setState(() => _previewLayout = value),
+      onPreviewLayoutChanged: (value) => setState(() => _previewLayout = value),
       onPageSizeChanged: (value) => setState(() => _pageSize = value),
       engineLoading: _engineLoading,
       engineError: _engineError,
@@ -1127,7 +1180,7 @@ class _EditorPageState extends State<EditorPage>
   void _togglePreviewMaximized() {
     setState(() {
       final shouldMaximize = !_previewMaximized;
-      _documentsMinimized = shouldMaximize;
+      _foldDocumentsForMaximize(shouldMaximize);
       _sourceMinimized = shouldMaximize;
       _previewMinimized = false;
     });
@@ -1136,10 +1189,22 @@ class _EditorPageState extends State<EditorPage>
   void _toggleSourceMaximized() {
     setState(() {
       final shouldMaximize = !_sourceMaximized;
-      _documentsMinimized = shouldMaximize;
+      _foldDocumentsForMaximize(shouldMaximize);
       _previewMinimized = shouldMaximize;
       _sourceMinimized = false;
     });
+  }
+
+  /// Maximizing folds a shown Documents pane and restoring brings it back
+  /// as it was; a pane the layout is not showing is left alone.
+  void _foldDocumentsForMaximize(bool shouldMaximize) {
+    if (shouldMaximize) {
+      _documentsMinimizedBeforeMaximize = _documentsMinimized;
+      if (_documentsShown) _documentsMinimized = true;
+    } else {
+      _documentsMinimized = _documentsMinimizedBeforeMaximize ?? false;
+      _documentsMinimizedBeforeMaximize = null;
+    }
   }
 
   void _toggleDocumentsMinimized() {
@@ -1740,7 +1805,10 @@ class _PageSetupMenuState extends State<_PageSetupMenu> {
           variant: MButtonVariant.ghost,
           size: MButtonSize.xs,
           onPressed: _menu.toggle,
-          style: const MButtonStyleDelta(minHeight: 32, padding: EdgeInsets.zero),
+          style: const MButtonStyleDelta(
+            minHeight: 32,
+            padding: EdgeInsets.zero,
+          ),
           child: const MIcon(
             MIconData.fileText,
             size: 16,

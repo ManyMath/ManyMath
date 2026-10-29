@@ -9,9 +9,13 @@ import 'package:manymath/src/editor_page.dart';
 import 'package:manymath/src/formula_check.dart';
 import 'package:manymath/src/latex_document.dart';
 import 'package:manymath/src/page_setup.dart';
+import 'package:manymath/src/papers.dart';
 import 'package:manymath/src/preview_theme.dart';
 import 'package:manymath/src/theme.dart';
 import 'package:manyui/manyui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'quota_preferences.dart';
 
 void main() {
   Future<void> settleRender(WidgetTester tester) async {
@@ -275,6 +279,54 @@ void main() {
     expect(find.text('Saved locally'), findsNothing);
   });
 
+  testWidgets('a save that failed while loading is reported', (tester) async {
+    final store = await DocumentStore.load(
+      preferences: QuotaPreferences(<String, Object>{}),
+    );
+    await pumpEditor(tester, store: store);
+
+    expect(find.text('Could not save the local document.'), findsOneWidget);
+    expect(store.documents, hasLength(papers.length));
+  });
+
+  testWidgets('recovered data can be copied and dismissed', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      DocumentStore.documentsStorageKey: 'not json {',
+    });
+    final store = await DocumentStore.load(now: () => DateTime.utc(2026));
+    expect(store.recoveryPayload, 'not json {');
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map<Object?, Object?>)['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await pumpEditor(tester, store: store);
+
+    expect(find.text('Local data recovered'), findsOneWidget);
+    await tester.tap(find.text('Copy data'));
+    await tester.pump();
+    expect(copied, 'not json {');
+
+    await tester.tap(find.text('Dismiss'));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 25)),
+    );
+    await tester.pumpAndSettle();
+    expect(store.recoveryPayload, isNull);
+    expect(find.text('Local data recovered'), findsNothing);
+  });
+
   testWidgets('compact document button opens the local document browser', (
     tester,
   ) async {
@@ -345,6 +397,26 @@ Content.
     ).join('\n\n');
     await pumpEditor(tester, initialSource: source);
 
+    // Native compute can finish after pumpAndSettle finds no scheduled frames.
+    // Wait for the mounted parsed model, rather than the early Rendered label.
+    final parsing = Stopwatch()..start();
+    while (true) {
+      final previews = tester.widgetList<DocumentView>(
+        find.byType(DocumentView),
+      );
+      if (previews.length == 1 && previews.single.blocks.length == 300) break;
+      if (parsing.elapsed >= const Duration(seconds: 10)) {
+        fail(
+          'Timed out waiting for the mounted preview to contain 300 blocks.',
+        );
+      }
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+
     expect(find.text('Paragraph 0'), findsOneWidget);
     expect(find.text('Paragraph 299'), findsNothing);
     expect(
@@ -387,6 +459,13 @@ Content.
     expect(find.text('Rendered'), findsOneWidget);
     expect(find.text('Second edit is longer'), findsNWidgets(2));
     expect(find.text('Original document'), findsNothing);
+  });
+
+  testWidgets('the character count counts an astral character once', (
+    tester,
+  ) async {
+    await pumpEditor(tester, initialSource: 'abc \u{1D44E}');
+    expect(find.textContaining('5 characters'), findsOneWidget);
   });
 
   testWidgets('the auto render button toggles automatic rendering on and off', (
@@ -540,6 +619,94 @@ Content.
     expect(find.text('Saved locally'), findsOneWidget);
   });
 
+  testWidgets('undo after switching documents stays within the new one', (
+    tester,
+  ) async {
+    final store = DocumentStore.inMemory(
+      documents: <ManyMathDocument>[
+        ManyMathDocument(
+          id: 'a',
+          name: 'Alpha doc',
+          source: 'ALPHA SOURCE',
+          updatedAt: DateTime.utc(2026),
+        ),
+        ManyMathDocument(
+          id: 'b',
+          name: 'Beta doc',
+          source: 'BETA SOURCE',
+          updatedAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+    await pumpEditor(tester, store: store);
+    final editor = find.bySemanticsLabel('LaTeX source editor');
+    String text() =>
+        tester.widget<EditableText>(find.byType(EditableText)).controller.text;
+    expect(text(), 'ALPHA SOURCE');
+
+    await tester.enterText(editor, 'ALPHA EDITED');
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.text('Beta doc').last);
+    await tester.pumpAndSettle();
+    expect(text(), 'BETA SOURCE');
+
+    // The editor keeps an undo history per EditableText; it must not reach
+    // back into the previous document's buffer.
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(editor);
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+
+    expect(text(), 'BETA SOURCE');
+    expect(store.byId('b')?.source, 'BETA SOURCE');
+    expect(store.byId('a')?.source, 'ALPHA EDITED');
+  });
+
+  testWidgets('formatting shortcuts only edit a focused source editor', (
+    tester,
+  ) async {
+    final store = await pumpEditor(
+      tester,
+      size: const Size(700, 900),
+      initialSource: 'hello world',
+    );
+    Future<void> controlB() async {
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+    }
+
+    final surfaces = find.byWidgetPredicate(
+      (widget) => widget is MSegmentedControl<EditorSurface>,
+    );
+    // The compact layout is showing the preview; the source is hidden.
+    await tester.tap(
+      find.descendant(of: surfaces, matching: find.text('Preview')),
+    );
+    await tester.pump();
+    await controlB();
+    expect(store.documents.single.source, 'hello world');
+
+    await tester.tap(
+      find.descendant(of: surfaces, matching: find.text('Source')),
+    );
+    await tester.pump();
+    await tester.tap(find.byType(EditableText));
+    await tester.pump();
+    final editable = tester.widget<EditableText>(find.byType(EditableText));
+    editable.controller.selection = const TextSelection(
+      baseOffset: 0,
+      extentOffset: 5,
+    );
+    await tester.pump();
+    await controlB();
+    expect(store.documents.single.source, r'\textbf{hello} world');
+  });
+
   testWidgets('formatting snippets wrap the current editor selection', (
     tester,
   ) async {
@@ -626,6 +793,56 @@ Content.
       ),
       findsNothing,
     );
+  });
+
+  testWidgets('a collapsed problems panel stays collapsed across renders', (
+    tester,
+  ) async {
+    var broken = true;
+    await pumpEditor(
+      tester,
+      initialSource: r'Before $broken$ after',
+      formulaChecker: (_) => broken
+          ? const <FormulaIssue>[
+              FormulaIssue(
+                latex: 'broken',
+                message: 'Unknown command',
+                displayMode: false,
+                errorStart: 8,
+                errorEnd: 14,
+              ),
+            ]
+          : const <FormulaIssue>[],
+    );
+    final jump = find.bySemanticsLabel(
+      'Jump to problem: Unknown command. Formula: broken',
+    );
+    expect(jump, findsOneWidget, reason: 'new problems open the panel');
+
+    Future<void> editAndRender(String source) async {
+      await tester.enterText(
+        find.bySemanticsLabel('LaTeX source editor'),
+        source,
+      );
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await settleRender(tester);
+    }
+
+    await tester.tap(find.bySemanticsLabel('Problems panel, 1 problems'));
+    await tester.pump();
+    expect(jump, findsNothing);
+    await editAndRender(r'Before $broken$ still');
+    expect(jump, findsNothing, reason: 'the reader collapsed it');
+
+    broken = false;
+    await editAndRender('Fixed');
+    expect(find.bySemanticsLabel('Problems panel, none'), findsOneWidget);
+    broken = true;
+    await editAndRender(r'Broken $broken$ again');
+    expect(jump, findsOneWidget, reason: 'problems are new again');
   });
 
   PreviewTheme previewTheme(WidgetTester tester) =>
@@ -729,6 +946,54 @@ Content.
     // The button disables at the ceiling: another tap changes nothing.
     await zoomIn();
     expect(find.text('300%'), findsOneWidget);
+  });
+
+  testWidgets('preview zoom bottoms out at 70 percent without a dead tap', (
+    tester,
+  ) async {
+    await pumpEditor(tester);
+
+    for (var i = 0; i < 3; i++) {
+      await tester.tap(find.bySemanticsLabel('Zoom out'));
+      await tester.pump();
+    }
+    expect(find.text('70%'), findsOneWidget);
+    // Three 0.1 steps accumulate float error; the limit must still disable
+    // the button rather than leave a tap that only clamps.
+    final button = tester.widget<MButton>(
+      find.ancestor(
+        of: find.bySemanticsLabel('Zoom out'),
+        matching: find.byType(MButton),
+      ),
+    );
+    expect(button.onPressed, isNull);
+  });
+
+  testWidgets('maximizing leaves a hidden Documents pane alone', (
+    tester,
+  ) async {
+    // Below the Documents breakpoint the pane is not in the layout.
+    await pumpEditor(tester, size: const Size(1000, 800));
+    expect(find.text('Documents'), findsNothing);
+
+    await tester.tap(find.bySemanticsLabel('Maximize source'));
+    await tester.pump();
+    expect(find.bySemanticsLabel('Restore split view'), findsOneWidget);
+
+    // Widening brings the Documents pane in open, not as a minimized strip
+    // the user never asked for; only the preview stays minimized.
+    tester.view.physicalSize = const Size(1280, 800);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Documents'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('expand-Documents-pane')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('expand-Preview-pane')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('page setup switches the preview between scroll and pages', (

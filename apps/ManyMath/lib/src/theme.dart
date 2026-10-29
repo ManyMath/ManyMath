@@ -99,7 +99,8 @@ MThemeData manyMathNightTheme() {
       secondary: const Color(0xFF1F0F0F),
       secondaryForeground: const Color(0xFFFF6666),
       muted: const Color(0xFF140A0A),
-      mutedForeground: const Color(0xFFB35555),
+      // 5.3:1 on the muted surface and 5.7:1 on black (AA for body text).
+      mutedForeground: const Color(0xFFC86A6A),
       accent: Color.alphaBlend(
         red.withValues(alpha: 0.16),
         const Color(0xFF140A0A),

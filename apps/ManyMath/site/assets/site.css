@@ -1,8 +1,7 @@
-/* Shared styles for ManyMath marketing sites.
-   Requires tokens/manymath-brand.css, fonts.css, fallbacks.css (linked first).
-   Page HTML has no inline stylesheet. Product copy is set in build_sites.py.
-   See brand/BRAND.md §4-§7. Generated sites: do not edit per-site copies;
-   edit brand/site-template/site.css and re-run tool/build_sites.py. */
+/* Styles for the ManyMath.com site. This is the canonical copy: it was
+   consolidated from the shared brand site template and is edited here.
+   Requires tokens/manymath-brand.css, fonts.css, fallbacks.css (linked
+   first). Page HTML has no inline stylesheet. */
 
 * { box-sizing: border-box; margin: 0; }
 html { scroll-behavior: smooth; }

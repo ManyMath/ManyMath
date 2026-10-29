@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manymath/src/latex_document.dart';
 import 'package:manymath/src/tikz_diagram.dart';
@@ -295,6 +297,132 @@ void main() {
     test('rejects an empty picture', () {
       expect(parseTikzDiagram(''), isNull);
     });
+
+    test('rejects malformed absolute coordinates instead of throwing', () {
+      expect(parseTikzDiagram(r'\node (a) at (1.2.3, 0) {a};'), isNull);
+      expect(parseTikzDiagram(r'\node (a) at (., 0) {a};'), isNull);
+      expect(parseTikzDiagram(r'\node (a) at (0, -.) {a};'), isNull);
+    });
+  });
+
+  group('parseTikzDiagram: label lines', () {
+    List<String> lines(String label) => parseTikzDiagram(
+      '\\node (a) at (0,0) {$label};',
+    )!.nodes.single.labelLines;
+
+    test('keeps uppercase macros inside math on one line', () {
+      expect(lines(r'$\Sigma$ round'), [r'$\Sigma$ round']);
+      expect(lines(r'$\Delta t$ \\ $\Pi$'), [r'$\Delta t$', r'$\Pi$']);
+      expect(lines(r'\$5 \\ $\Gamma$'), [r'\$5', r'$\Gamma$']);
+    });
+
+    test('still splits the collapsed artifact outside math', () {
+      expect(lines(r'STREAM\ChaCha20'), ['STREAM', 'ChaCha20']);
+    });
+
+    test('drops the spacing option of a line break', () {
+      expect(lines(r'a\\[2pt]b'), ['a', 'b']);
+      expect(lines(r'a\\[1.5ex] b \\ c'), ['a', 'b', 'c']);
+    });
+
+    test('still unescapes Markdown brackets that are not line breaks', () {
+      expect(lines(r'salt \[16 B\]'), ['salt [16 B]']);
+    });
+  });
+
+  group('layoutTikzDiagram', () {
+    TikzLayout layout(String code) => layoutTikzDiagram(
+      parseTikzDiagram(code)!,
+      pxPerCm: 10,
+      measureNode: (_) => const Size(20, 10),
+      measureEdgeLabel: (_) => const Size(16, 8),
+      labelGap: 2,
+      margin: 4,
+    )!;
+
+    test('places nodes in pixels with y pointing down', () {
+      final result = layout(r'\node (a) at (0,0) {A}; \node (b) at (5,3) {B};');
+      final a = result.nodes['a']!;
+      final b = result.nodes['b']!;
+      expect(b.center.dx - a.center.dx, closeTo(50, 1e-9));
+      expect(
+        a.center.dy - b.center.dy,
+        closeTo(30, 1e-9),
+        reason: 'b is higher up',
+      );
+      // Default inner sep pads the measured label on every side.
+      expect(a.width, greaterThan(20));
+      expect(a.left, 4, reason: 'the margin pads the drawing');
+    });
+
+    test('clips edges at node borders and keeps everything inside', () {
+      final result = layout(
+        r'\node (a) at (0,0) {A}; \node (b) at (6,0) {B};'
+        r'\draw[->] (a) -- node[above] {x} (b);',
+      );
+      final edge = result.edges.single;
+      expect(edge.arrow, isTrue);
+      expect(edge.start.dx, closeTo(result.nodes['a']!.right, 1e-9));
+      expect(edge.end.dx, closeTo(result.nodes['b']!.left, 1e-9));
+      final label = result.labels.single;
+      expect(label.rect.bottom, closeTo(edge.start.dy - 2, 1e-9));
+      final canvas = Offset.zero & result.size;
+      for (final rect in [...result.nodes.values, label.rect]) {
+        expect(canvas.contains(rect.topLeft), isTrue);
+        expect(canvas.contains(rect.bottomRight - const Offset(1, 1)), isTrue);
+      }
+    });
+
+    test('slides a label off a node it would cover', () {
+      final result = layout(
+        r'\node (a) at (0,0) {A}; \node (b) at (0,-2.5) {B};'
+        r'\node (c) at (1,-1.25) {C};'
+        r'\draw (a) -- node[right] {x} (b);',
+      );
+      final label = result.labels.single.rect;
+      expect(label.overlaps(result.nodes['c']!.deflate(1)), isFalse);
+    });
+  });
+
+  test('a label with no clear spot covers as little as it can', () {
+    // A wide node sits over every spot above the edge and a narrower one
+    // under the middle of the edge, so no spot is clear but the ends of
+    // the edge, below it, are only partly covered.
+    final diagram = parseTikzDiagram(
+      r'\node (a) at (0,0) {A}; \node (b) at (10,0) {B};'
+      r'\node (over) at (5,0.6) {over}; \node (under) at (5,-0.6) {under};'
+      r'\draw (a) -- node[above] {label} (b);',
+    )!;
+    final result = layoutTikzDiagram(
+      diagram,
+      pxPerCm: 10,
+      measureNode: (node) => switch (node.name) {
+        'over' => const Size(80, 10),
+        'under' => const Size(40, 10),
+        _ => const Size(20, 10),
+      },
+      measureEdgeLabel: (_) => const Size(30, 8),
+      labelGap: 2,
+      margin: 4,
+    )!;
+    double covered(Rect rect) {
+      final probe = rect.deflate(1);
+      var area = 0.0;
+      for (final node in result.nodes.values) {
+        if (!probe.overlaps(node)) continue;
+        final overlap = probe.intersect(node);
+        area += overlap.width * overlap.height;
+      }
+      return area;
+    }
+
+    final edge = result.edges.single;
+    final mid = (edge.start + edge.end) / 2;
+    final preferred = Rect.fromLTWH(mid.dx - 15, mid.dy - 10, 30, 8);
+    final chosen = result.labels.single.rect;
+    expect(covered(preferred), greaterThan(0));
+    expect(covered(chosen), greaterThan(0), reason: 'no spot is clear');
+    expect(covered(chosen), lessThan(covered(preferred)));
   });
 
   group('document integration', () {

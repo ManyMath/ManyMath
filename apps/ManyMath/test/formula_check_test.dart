@@ -1,23 +1,13 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manymath/src/formula_check.dart';
 import 'package:manymath/src/latex_document.dart';
 import 'package:manymath/src/templates.dart';
-import 'package:ratex_flutter/ratex_flutter.dart';
+import 'package:ratex/ratex.dart';
+
+import 'support/integration_fixtures.dart';
 
 void main() {
-  final libraryName = Platform.isMacOS
-      ? 'libratex_ffi.dylib'
-      : Platform.isWindows
-      ? 'ratex_ffi.dll'
-      : 'libratex_ffi.so';
-  final library = <String>[
-    '../ratex/native/ratex-ffi/target/debug/$libraryName',
-    '../ratex/native/ratex-ffi/target/release/$libraryName',
-    '../../../ratex/native/ratex-ffi/target/debug/$libraryName',
-    '../../../ratex/native/ratex-ffi/target/release/$libraryName',
-  ].map(File.new).where((file) => file.existsSync()).firstOrNull;
+  final library = nativeRatexLibrary();
   final skip = library == null ? 'native ratex_ffi not built' : false;
 
   setUpAll(() async {
@@ -40,6 +30,67 @@ void main() {
       selection.$2,
       lessThanOrEqualTo(constructStart + r'$\frac{1}{$'.length),
     );
+  }, skip: skip);
+
+  test('rewritten display environments compile and map errors back', () {
+    const valid = r'''
+\begin{multline*}
+a + b \\
++ c
+\end{multline*}
+\begin{eqnarray}
+x & = & \frac{1}{2} \\
+y & \le & 3
+\end{eqnarray}
+\begin{flalign*}
+p &= q
+\end{flalign*}
+''';
+    expect(checkFormulas(parseLatexDocument(valid)), isEmpty);
+
+    const broken =
+        'Before.\n\\begin{eqnarray}\nx & = & \\frac{1}{\n'
+        '\\end{eqnarray}\nAfter.';
+    final issues = checkFormulas(parseLatexDocument(broken));
+    expect(issues, hasLength(1));
+    final selection = issues.single.selection!;
+    expect(selection.$1, greaterThanOrEqualTo(broken.indexOf(r'\begin')));
+    expect(selection.$2, lessThanOrEqualTo(broken.indexOf('After.')));
+  }, skip: skip);
+
+  test('formulas using declared math operators compile', () {
+    const source = r'''
+\DeclareMathOperator{\negl}{negl}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\begin{document}
+A function $f(n) \le \negl(n)$ and \[ \argmax_{x \in S} g(x) \]
+\end{document}
+''';
+    expect(
+      checkFormulas(
+        parseLatexDocument(source),
+        macroPreamble: extractMacroPreamble(source),
+      ),
+      isEmpty,
+    );
+  }, skip: skip);
+
+  test('an error beside a citation still selects its source', () {
+    const source = r'''
+\begin{document}
+As in \cite{k}, $\frac{1}{$ fails.
+\begin{thebibliography}{9}
+\bibitem{k} Someone. 2020.
+\end{thebibliography}
+\end{document}
+''';
+    final issues = checkFormulas(parseLatexDocument(source));
+    expect(issues, hasLength(1));
+    final selection = issues.single.selection;
+    expect(selection, isNotNull);
+    final start = source.indexOf(r'$\frac{1}{$');
+    expect(selection!.$1, greaterThanOrEqualTo(start));
+    expect(selection.$2, lessThanOrEqualTo(start + r'$\frac{1}{$'.length));
   }, skip: skip);
 
   test('a live error is not mapped into a preceding comment', () {

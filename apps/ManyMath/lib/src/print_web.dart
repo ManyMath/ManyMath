@@ -21,16 +21,20 @@ void openPrintWindow(String html) {
 
   // The toolbar button is wired from here rather than an inline script, so
   // a strict Content-Security-Policy on the host page cannot block it.
-  doc.getElementById('manymath-print')?.addEventListener(
-    'click',
-    ((web.Event _) => win.print()).toJS,
-  );
+  doc
+      .getElementById('manymath-print')
+      ?.addEventListener('click', ((web.Event _) => win.print()).toJS);
 
-  // Raise the print dialog once the fonts settle; on any failure the
-  // toolbar button remains as the manual path.
+  // Raise the print dialog once the fonts settle; on any failure (the tab
+  // was closed first, or a dialog is already open) the toolbar button
+  // remains as the manual path.
   unawaited(
     win.document.fonts.ready.toDart
         .then((_) => win.print())
-        .catchError((_) => win.print()),
+        .catchError((Object _) {}),
   );
 }
+
+/// The document's base URL, which honours `<base href>` where the page
+/// location does not.
+String documentBaseUrl() => web.document.baseURI;

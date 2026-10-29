@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:manyui/manyui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,7 +16,7 @@ class ManyMathDocument {
     required this.source,
     required this.updatedAt,
     this.seedKey,
-    this.seedSource,
+    this.seedDigest,
   });
 
   factory ManyMathDocument.fromJson(Object? value) {
@@ -45,14 +46,22 @@ class ManyMathDocument {
       throw const FormatException('Document timestamp is out of range.');
     }
     final rawSeedKey = value['seedKey'];
+    final rawSeedDigest = value['seedDigest'];
+    // Stores before seedDigest kept the whole seed text instead.
     final rawSeedSource = value['seedSource'];
     return ManyMathDocument(
       id: id,
       name: name,
       source: source,
       updatedAt: updatedAt,
-      seedKey: rawSeedKey is String && rawSeedKey.isNotEmpty ? rawSeedKey : null,
-      seedSource: rawSeedSource is String ? rawSeedSource : null,
+      seedKey: rawSeedKey is String && rawSeedKey.isNotEmpty
+          ? rawSeedKey
+          : null,
+      seedDigest: rawSeedDigest is String
+          ? rawSeedDigest
+          : rawSeedSource is String
+          ? seedSourceDigest(rawSeedSource)
+          : null,
     );
   }
 
@@ -63,16 +72,22 @@ class ManyMathDocument {
   // Stable key linking this document to its originating paper; null for
   // user-created documents. Never changes, even if the user renames the doc.
   final String? seedKey;
-  // The paper source as it was when this document was seeded. If source ==
-  // seedSource the user has not made edits, so the doc can be refreshed safely.
-  final String? seedSource;
+  // A digest of the paper source as it was when this document was seeded.
+  // While the source still has this digest the user has not edited it, so
+  // the doc can be refreshed safely. A digest rather than the text itself
+  // keeps every bundled paper from being stored twice.
+  final String? seedDigest;
+
+  /// Whether the document still holds the paper text it was seeded with.
+  bool get isUneditedSeed =>
+      seedDigest != null && seedSourceDigest(source) == seedDigest;
 
   ManyMathDocument copyWith({
     String? name,
     String? source,
     DateTime? updatedAt,
     String? seedKey,
-    String? seedSource,
+    String? seedDigest,
   }) {
     return ManyMathDocument(
       id: id,
@@ -80,7 +95,7 @@ class ManyMathDocument {
       source: source ?? this.source,
       updatedAt: updatedAt ?? this.updatedAt,
       seedKey: seedKey ?? this.seedKey,
-      seedSource: seedSource ?? this.seedSource,
+      seedDigest: seedDigest ?? this.seedDigest,
     );
   }
 
@@ -90,9 +105,13 @@ class ManyMathDocument {
     'source': source,
     'updatedAt': updatedAt.millisecondsSinceEpoch,
     if (seedKey != null) 'seedKey': seedKey,
-    if (seedSource != null) 'seedSource': seedSource,
+    if (seedDigest != null) 'seedDigest': seedDigest,
   };
 }
+
+/// The SHA-256 of [source]'s UTF-8 bytes, as lowercase hex.
+String seedSourceDigest(String source) =>
+    sha256.convert(utf8.encode(source)).toString();
 
 class DocumentPersistenceException implements Exception {
   const DocumentPersistenceException(this.operation, [this.cause]);
@@ -186,10 +205,6 @@ class DocumentStore extends ChangeNotifier {
       }
     }
 
-    if (raw == null || (needsRepair && documents.isEmpty)) {
-      documents.addAll(_seedDocuments((now ?? DateTime.now)()));
-    }
-
     if (needsRepair && raw != null) {
       await _requireWrite(
         'back up corrupt document data',
@@ -200,16 +215,44 @@ class DocumentStore extends ChangeNotifier {
     // Reconcile the stored document list against the current bundled papers.
     // This runs on every load so that papers added or updated in a new build
     // are reflected for returning users without clearing their data.
-    final removedSeeds = _decodeRemovedSeeds(storage.getString(removedSeedsStorageKey));
-    final seedsChanged = _reconcileSeeds(documents, now ?? DateTime.now, removedSeeds);
+    final removedSeeds = _decodeRemovedSeeds(
+      storage.getString(removedSeedsStorageKey),
+    );
+    final seedsChanged = _reconcileSeeds(
+      documents,
+      now ?? DateTime.now,
+      removedSeeds,
+    );
+
+    // Stores written before seedDigest hold a full copy of every seed's text;
+    // saving once drops it.
+    final legacySeedCopies = raw != null && raw.contains('"seedSource"');
 
     final store = DocumentStore._(storage, documents, now ?? DateTime.now);
-    if (raw == null || needsRepair || seedsChanged) {
-      await store._persistImmediately();
+    if (raw == null || needsRepair || seedsChanged || legacySeedCopies) {
+      // The documents read above are intact (and any damaged original is
+      // backed up), so a failed save here, such as a full browser storage
+      // quota, must not cost the reader their library: keep the store and
+      // let the editor report the failure like any other save.
+      try {
+        await store._persistImmediately();
+      } on DocumentPersistenceException catch (error) {
+        store._loadError = error;
+      }
     }
     return store;
   }
 
+  DocumentPersistenceException? _loadError;
+
+  /// A save that failed while loading, for the editor to report once.
+  DocumentPersistenceException? takeLoadError() {
+    final error = _loadError;
+    _loadError = null;
+    return error;
+  }
+
+  /// The bundled papers as fresh documents, for an in-memory session.
   static List<ManyMathDocument> _seedDocuments(DateTime timestamp) {
     return <ManyMathDocument>[
       for (var index = 0; index < papers.length; index++)
@@ -221,7 +264,7 @@ class DocumentStore extends ChangeNotifier {
           source: papers[index].source,
           updatedAt: timestamp,
           seedKey: papers[index].name,
-          seedSource: papers[index].source,
+          seedDigest: seedSourceDigest(papers[index].source),
         ),
     ];
   }
@@ -230,12 +273,15 @@ class DocumentStore extends ChangeNotifier {
   // caller knows to persist the updated list.
   //
   // Three passes:
-  //   1. Migration: assign seedKey/seedSource to pre-existing seed docs that
-  //      pre-date this field by matching their source against current papers.
-  //   2. Refresh: if a seed doc's source still equals its seedSource (user
+  //   1. Migration: assign seedKey/seedDigest to pre-existing seed docs that
+  //      pre-date this field. Each paper claims at most one document, and a
+  //      paper already represented claims none, so a user's "Copy of" a
+  //      paper never becomes the seed itself.
+  //   2. Refresh: if a seed doc's source still has its seedDigest (user
   //      hasn't edited it) but the paper has since been updated, replace it.
   //   3. Injection: add any papers not yet represented in the store, skipping
   //      papers the user has explicitly removed (tracked in [removedSeeds]).
+  //      A fresh or fully unreadable store is seeded here too.
   static bool _reconcileSeeds(
     List<ManyMathDocument> documents,
     DateTime Function() now,
@@ -243,32 +289,42 @@ class DocumentStore extends ChangeNotifier {
   ) {
     var changed = false;
 
-    // Pass 1: migrate docs without a seedKey by matching source content.
-    for (var i = 0; i < documents.length; i++) {
-      if (documents[i].seedKey != null) continue;
-      for (final paper in papers) {
-        if (documents[i].source == paper.source) {
-          documents[i] = documents[i].copyWith(
-            seedKey: paper.name,
-            seedSource: paper.source,
-          );
-          changed = true;
-          break;
-        }
+    // Pass 1: migrate docs without a seedKey. The pre-seedKey schema named
+    // every seed after its paper, so a name match identifies an edited seed;
+    // a source match catches a renamed, unedited one.
+    final keyed = <String>{
+      for (final doc in documents)
+        if (doc.seedKey != null) doc.seedKey!,
+    };
+    for (final paper in papers) {
+      if (keyed.contains(paper.name)) continue;
+      var index = documents.indexWhere(
+        (doc) => doc.seedKey == null && doc.name == paper.name,
+      );
+      if (index < 0) {
+        index = documents.indexWhere(
+          (doc) => doc.seedKey == null && doc.source == paper.source,
+        );
       }
+      if (index < 0) continue;
+      documents[index] = documents[index].copyWith(
+        seedKey: paper.name,
+        seedDigest: seedSourceDigest(paper.source),
+      );
+      keyed.add(paper.name);
+      changed = true;
     }
 
     // Pass 2: refresh unmodified seed docs whose paper source has changed.
     for (var i = 0; i < documents.length; i++) {
       final doc = documents[i];
-      if (doc.seedKey == null || doc.seedSource == null) continue;
-      if (doc.source != doc.seedSource) continue; // user has edits -- skip
+      if (doc.seedKey == null || !doc.isUneditedSeed) continue;
       for (final paper in papers) {
         if (paper.name != doc.seedKey) continue;
         if (paper.source == doc.source) break; // already current
         documents[i] = doc.copyWith(
           source: paper.source,
-          seedSource: paper.source,
+          seedDigest: seedSourceDigest(paper.source),
         );
         changed = true;
         break;
@@ -284,7 +340,10 @@ class DocumentStore extends ChangeNotifier {
     final timestamp = now();
     var seedIndex = documents.length;
     for (final paper in papers) {
-      if (seededKeys.contains(paper.name) || removedSeeds.contains(paper.name)) continue;
+      if (seededKeys.contains(paper.name) ||
+          removedSeeds.contains(paper.name)) {
+        continue;
+      }
       documents.add(
         ManyMathDocument(
           id:
@@ -294,7 +353,7 @@ class DocumentStore extends ChangeNotifier {
           source: paper.source,
           updatedAt: timestamp,
           seedKey: paper.name,
-          seedSource: paper.source,
+          seedDigest: seedSourceDigest(paper.source),
         ),
       );
       seedIndex++;
@@ -474,6 +533,7 @@ class DocumentStore extends ChangeNotifier {
       () => _preferences.remove(recoveryStorageKey),
     );
     await flush();
+    if (!_disposed) notifyListeners();
   }
 
   int _indexOf(String id) =>

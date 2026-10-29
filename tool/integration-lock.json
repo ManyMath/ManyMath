@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "status": "Editor release candidate with public package dependencies",
+  "dependencies": {
+    "ratex": {
+      "source": "hosted",
+      "version": "0.0.1"
+    },
+    "ratex_dart": {
+      "source": "hosted",
+      "version": "0.0.1"
+    },
+    "manyui": {
+      "repository": "https://github.com/ManyMath/ManyUI.git",
+      "revision": "d5b8881a8a582ef0f6f5989addd6ab1fd4ef144c",
+      "path": "manyui",
+      "public_mirror": "https://github.com/ManyMath/ManyUI",
+      "public_pin_verified": true
+    }
+  },
+  "fixtures": [
+    {
+      "dependency": "ratex",
+      "source_path": "compat_macros.json",
+      "local_path": "apps/ManyMath/test/fixtures/integration/ratex/compat_macros.json",
+      "sha256": "c05e8b2b07f05c8e1096b8a067b17c06676208853c87cdaeb4d68d8e078383a1",
+      "provenance": {
+        "repository": "https://github.com/ManyMath/ratex.git",
+        "revision": "6b7babd64f3a3c47b026b3066b4836be33e67863",
+        "path": "packages/ratex/compat_macros.json"
+      }
+    },
+    {
+      "dependency": "ratex",
+      "source_path": "compat_fixtures.json",
+      "local_path": "apps/ManyMath/test/fixtures/integration/ratex/compat_fixtures.json",
+      "sha256": "07e4349c67c04cced5139be52cea2189628d8cb8bc773e5b48a17dd58a931859",
+      "provenance": {
+        "repository": "https://github.com/ManyMath/ratex.git",
+        "revision": "6b7babd64f3a3c47b026b3066b4836be33e67863",
+        "path": "packages/ratex/compat_fixtures.json"
+      }
+    },
+    {
+      "dependency": "ratex",
+      "source_path": "LICENSE",
+      "local_path": "apps/ManyMath/test/fixtures/integration/ratex/LICENSE",
+      "sha256": "afed692f75e2711f606beaba25f168dede3ec4633bf3d7b8bbb71f02a86d9351",
+      "provenance": {
+        "repository": "https://github.com/ManyMath/ratex.git",
+        "revision": "6b7babd64f3a3c47b026b3066b4836be33e67863",
+        "path": "LICENSE"
+      }
+    }
+  ],
+  "disclosure_pending": [
+    "Existing bundled FROSTLASS/rage papers predate this separation and retain their owner disclosure qualification. No additional disclosure authorization is inferred."
+  ],
+  "mirror_order": [
+    "ManyUI public revision and ratex/ratex_dart pub.dev packages are already available",
+    "ManyMath: owner reviews and mirrors this editor-only branch; public CI and deployment remain separate owner actions"
+  ]
+}

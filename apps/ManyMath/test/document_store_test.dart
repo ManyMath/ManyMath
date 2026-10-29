@@ -7,6 +7,8 @@ import 'package:manymath/src/theme.dart';
 import 'package:manyui/manyui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'quota_preferences.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -21,6 +23,31 @@ void main() {
     await store.flush();
     expect(store.byId(document.id)?.source, 'local edit');
   });
+
+  test(
+    'a failed save while loading keeps the library and reports it',
+    () async {
+      final stored = jsonEncode(<Object?>[
+        <String, Object?>{
+          'id': 'mine',
+          'name': 'My notes',
+          'source': 'kept',
+          'updatedAt': 1234,
+        },
+      ]);
+      final preferences = QuotaPreferences(<String, Object>{
+        DocumentStore.documentsStorageKey: stored,
+      });
+
+      // Injecting the bundled papers needs a save, which the quota refuses.
+      final store = await DocumentStore.load(preferences: preferences);
+      expect(store.byId('mine')?.source, 'kept');
+      expect(store.documents, hasLength(1 + papers.length));
+      expect(store.takeLoadError(), isA<DocumentPersistenceException>());
+      expect(store.takeLoadError(), isNull, reason: 'reported once');
+      expect(preferences.values[DocumentStore.documentsStorageKey], stored);
+    },
+  );
 
   test('a fresh store creates and durably saves the bundled papers', () async {
     final store = await DocumentStore.load(now: () => DateTime.utc(2026));
@@ -141,19 +168,126 @@ void main() {
     },
   );
 
-  test(
-    'explicitly removed seed docs are not reinjected on reload',
-    () async {
-      final store = await DocumentStore.load(now: () => DateTime.utc(2026));
-      for (final doc in store.documents.toList()) {
-        store.remove(doc.id);
-      }
-      await store.close();
+  test('duplicating a bundled paper does not make the copy its seed', () async {
+    final store = await DocumentStore.load(now: () => DateTime.utc(2026));
+    final paper = store.documents.first;
+    final copy = store.duplicate(paper.id)!;
+    await store.close();
 
-      final reloaded = await DocumentStore.load();
-      expect(reloaded.documents, isEmpty);
-    },
-  );
+    final reloaded = await DocumentStore.load();
+    expect(reloaded.byId(copy.id)?.seedKey, isNull);
+    expect(reloaded.byId(paper.id)?.seedKey, papers.first.name);
+    expect(reloaded.remove(copy.id), isTrue);
+    await reloaded.close();
+
+    // Removing the copy did not tombstone the paper: it is still present and
+    // only its own removal keeps it out.
+    final afterCopy = await DocumentStore.load();
+    expect(afterCopy.byId(paper.id), isNotNull);
+    expect(afterCopy.remove(paper.id), isTrue);
+    await afterCopy.close();
+    final afterPaper = await DocumentStore.load();
+    expect(
+      afterPaper.documents.map((document) => document.seedKey),
+      isNot(contains(papers.first.name)),
+    );
+  });
+
+  test('a pre-seedKey edited paper is keyed by name, not duplicated', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      DocumentStore.documentsStorageKey: jsonEncode(<Object?>[
+        <String, Object?>{
+          'id': 'legacy',
+          'name': papers.first.name,
+          'source': '${papers.first.source}\n% local edit',
+          'updatedAt': 1234,
+        },
+      ]),
+    });
+
+    final store = await DocumentStore.load();
+    final migrated = store.byId('legacy')!;
+    expect(migrated.seedKey, papers.first.name);
+    expect(migrated.seedDigest, seedSourceDigest(papers.first.source));
+    expect(migrated.isUneditedSeed, isFalse);
+    expect(migrated.source, endsWith('% local edit'));
+    expect(store.documents, hasLength(papers.length));
+  });
+
+  test('a fully unreadable store respects removed seeds', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      DocumentStore.documentsStorageKey: jsonEncode(<Object?>[
+        <String, Object?>{'id': 42},
+      ]),
+      DocumentStore.removedSeedsStorageKey: jsonEncode(<String>[
+        papers.first.name,
+      ]),
+    });
+
+    final store = await DocumentStore.load();
+    expect(store.documents, hasLength(papers.length - 1));
+    expect(
+      store.documents.map((document) => document.seedKey),
+      isNot(contains(papers.first.name)),
+    );
+  });
+
+  test('seed documents store a digest instead of a second copy', () async {
+    final store = await DocumentStore.load(now: () => DateTime.utc(2026));
+    await store.close();
+    final raw = (await SharedPreferences.getInstance()).getString(
+      DocumentStore.documentsStorageKey,
+    )!;
+    expect(raw, isNot(contains('"seedSource"')));
+    final sources = papers.fold<int>(0, (sum, p) => sum + p.source.length);
+    expect(raw.length, lessThan(sources * 1.5));
+  });
+
+  test('a stored seed copy becomes a digest and still detects edits', () async {
+    final edited = '${papers.first.source}\n% mine';
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      DocumentStore.documentsStorageKey: jsonEncode(<Object?>[
+        <String, Object?>{
+          'id': 'unedited',
+          'name': papers.first.name,
+          'source': 'an older printing',
+          'updatedAt': 1234,
+          'seedKey': papers.first.name,
+          'seedSource': 'an older printing',
+        },
+        <String, Object?>{
+          'id': 'edited',
+          'name': papers.last.name,
+          'source': edited,
+          'updatedAt': 1234,
+          'seedKey': papers.last.name,
+          'seedSource': 'an older printing of the last paper',
+        },
+      ]),
+    });
+
+    final store = await DocumentStore.load();
+    // The unedited seed follows the bundled paper; the edited one is kept.
+    expect(store.byId('unedited')?.source, papers.first.source);
+    expect(store.byId('edited')?.source, edited);
+    await store.close();
+    final raw = (await SharedPreferences.getInstance()).getString(
+      DocumentStore.documentsStorageKey,
+    )!;
+    expect(raw, isNot(contains('"seedSource"')));
+    expect(raw, contains(seedSourceDigest(papers.first.source)));
+  });
+
+  test('explicitly removed seed docs are not reinjected on reload', () async {
+    final store = await DocumentStore.load(now: () => DateTime.utc(2026));
+    for (final doc in store.documents.toList()) {
+      store.remove(doc.id);
+    }
+    await store.close();
+
+    final reloaded = await DocumentStore.load();
+    expect(reloaded.documents, isEmpty);
+  });
 
   test('document operations and settings round-trip', () async {
     var tick = 0;

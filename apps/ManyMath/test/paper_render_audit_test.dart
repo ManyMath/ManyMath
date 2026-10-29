@@ -6,13 +6,13 @@
 /// context instead of just failing.
 library;
 
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manymath/src/formula_check.dart';
 import 'package:manymath/src/latex_document.dart';
 import 'package:manymath/src/papers.dart';
-import 'package:ratex_flutter/ratex_flutter.dart';
+import 'package:ratex/ratex.dart';
+
+import 'support/integration_fixtures.dart';
 
 const _verbose = bool.fromEnvironment('AUDIT_VERBOSE');
 
@@ -71,10 +71,8 @@ void _walkBlocks(List<DocBlock> blocks, List<String> leaks, String where) {
       case FootnoteBlock():
         _collectLeaks(block.spans, leaks, '$where/fn');
       case TitleBlock():
-        for (final metadata in [block.title, block.author, block.date]) {
-          if (metadata != null) {
-            _collectLeaks(parseInline(metadata), leaks, '$where/title');
-          }
+        for (final metadata in block.metadataInlines) {
+          _collectLeaks(metadata, leaks, '$where/title');
         }
       case TikzDiagramBlock():
         for (final line in block.diagram.allLabelLines) {
@@ -114,17 +112,7 @@ int _countPlaceholders(List<DocBlock> blocks) {
 }
 
 void main() {
-  final libraryName = Platform.isMacOS
-      ? 'libratex_ffi.dylib'
-      : Platform.isWindows
-      ? 'ratex_ffi.dll'
-      : 'libratex_ffi.so';
-  final library = <String>[
-    '../ratex/native/ratex-ffi/target/debug/$libraryName',
-    '../ratex/native/ratex-ffi/target/release/$libraryName',
-    '../../../ratex/native/ratex-ffi/target/debug/$libraryName',
-    '../../../ratex/native/ratex-ffi/target/release/$libraryName',
-  ].map(File.new).where((file) => file.existsSync()).firstOrNull;
+  final library = nativeRatexLibrary();
   final skip = library == null ? 'native ratex_ffi not built' : false;
 
   setUpAll(() async {

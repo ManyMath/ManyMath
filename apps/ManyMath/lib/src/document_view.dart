@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
-import 'package:manyui/manyui.dart';
-import 'package:ratex_flutter/ratex_flutter.dart';
+import 'package:ratex/ratex.dart';
 
 import 'latex_document.dart';
 import 'page_setup.dart';
@@ -101,6 +101,16 @@ class _DocumentViewState extends State<DocumentView> {
   bool _measurePending = false;
   Timer? _verifyTimer;
 
+  /// Heights from the last measurement, so verification can tell whether
+  /// formulas and fonts have finished changing the layout.
+  List<double>? _measuredHeights;
+  int _verifyPasses = 0;
+
+  /// Formulas render asynchronously and bundled fonts resolve after first
+  /// paint, so pagination re-measures until two passes agree, bounded so a
+  /// never-settling layout does not re-measure forever.
+  static const int _maxVerifyPasses = 8;
+
   @override
   void dispose() {
     _verifyTimer?.cancel();
@@ -118,6 +128,8 @@ class _DocumentViewState extends State<DocumentView> {
         oldWidget.pageSize != widget.pageSize) {
       _pages = null;
       _measureKeys = null;
+      _measuredHeights = null;
+      _verifyTimer?.cancel();
     }
   }
 
@@ -293,23 +305,28 @@ class _DocumentViewState extends State<DocumentView> {
             Stack(
               children: <Widget>[
                 if (measureKeys != null)
-                  Offstage(
-                    // The scroll wrapper hands the measure column unbounded
-                    // height, so every block lays out at its natural size
-                    // (a bare Column would overflow the stack's bound).
-                    child: SingleChildScrollView(
-                      child: SizedBox(
-                        width: contentWidth,
-                        child: DefaultTextStyle(
-                          style: textStyle,
-                          child: Column(
-                            children: <Widget>[
-                              for (var i = 0; i < blocks.length; i++)
-                                Container(
-                                  key: measureKeys[i],
-                                  child: _buildBlock(context, blocks[i]),
-                                ),
-                            ],
+                  // Offstage skips paint and hit tests but still registers
+                  // with the enclosing SelectableRegion, so without this
+                  // select-all would copy the document twice.
+                  SelectionContainer.disabled(
+                    child: Offstage(
+                      // The scroll wrapper hands the measure column unbounded
+                      // height, so every block lays out at its natural size
+                      // (a bare Column would overflow the stack's bound).
+                      child: SingleChildScrollView(
+                        child: SizedBox(
+                          width: contentWidth,
+                          child: DefaultTextStyle(
+                            style: textStyle,
+                            child: Column(
+                              children: <Widget>[
+                                for (var i = 0; i < blocks.length; i++)
+                                  Container(
+                                    key: measureKeys[i],
+                                    child: _buildBlock(context, blocks[i]),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -418,10 +435,15 @@ class _DocumentViewState extends State<DocumentView> {
               right: 0,
               bottom: paperPadding * 0.3,
               child: ExcludeSemantics(
-                child: Text(
-                  '${pageIndex + 1}',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: _palette.dimText, fontSize: 12 * zoom),
+                child: SelectionContainer.disabled(
+                  child: Text(
+                    '${pageIndex + 1}',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: _palette.dimText,
+                      fontSize: 12 * zoom,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -452,19 +474,23 @@ class _DocumentViewState extends State<DocumentView> {
       _scheduleMeasurement(capacity);
       return;
     }
+    final settled =
+        _measuredHeights != null && listEquals(_measuredHeights, heights);
+    _measuredHeights = heights;
+    // Rebuild even when the heights settled: the page text only registers
+    // with the selection region on a build after the measurement pass.
     final pages = packBlocksIntoPages(heights, capacity);
     setState(() => _pages = pages);
-    if (scheduleVerify) {
-      // Bundled fonts resolve a beat after first paint; silently re-measure
-      // once so pagination follows the final metrics.
-      _verifyTimer?.cancel();
-      _verifyTimer = Timer(const Duration(milliseconds: 600), () {
-        if (!mounted || widget.pageSize == null || _measureKeys == null) {
-          return;
-        }
-        _captureHeights(capacity, scheduleVerify: false);
-      });
-    }
+    if (scheduleVerify) _verifyPasses = 0;
+    if (settled || _verifyPasses >= _maxVerifyPasses) return;
+    _verifyPasses++;
+    _verifyTimer?.cancel();
+    _verifyTimer = Timer(const Duration(milliseconds: 600), () {
+      if (!mounted || widget.pageSize == null || _measureKeys == null) {
+        return;
+      }
+      _captureHeights(capacity, scheduleVerify: false);
+    });
   }
 
   Widget _formula(
@@ -483,7 +509,7 @@ class _DocumentViewState extends State<DocumentView> {
       errorBuilder: (_, error) => Text(
         'Formula error: ${error.message}',
         style: TextStyle(
-          color: MTheme.of(context).colors.destructive,
+          color: _palette.error,
           fontFamily: monoFontFamily,
           fontFamilyFallback: monoFontFallback,
           fontSize: fontSize * 0.68,
@@ -496,35 +522,31 @@ class _DocumentViewState extends State<DocumentView> {
     switch (block) {
       case TitleBlock():
         Widget metadata(
-          String source,
-          List<int>? sourceMap,
+          List<DocInline> spans,
           double fontSize,
           TextStyle style,
         ) {
           return Text.rich(
-            TextSpan(
-              children: _inlineSpans(
-                context,
-                parseInline(source, sourceMap: sourceMap),
-                fontSize,
-              ),
-            ),
+            TextSpan(children: _inlineSpans(context, spans, fontSize)),
             textAlign: TextAlign.center,
             style: style,
           );
         }
 
+        final title = block.titleInlines;
+        final author = block.authorInlines;
+        final date = block.dateInlines;
+
         return Padding(
           padding: EdgeInsets.only(bottom: 24 * zoom),
           child: Column(
             children: <Widget>[
-              if (block.title != null)
+              if (title != null)
                 Semantics(
                   header: true,
                   headingLevel: 2,
                   child: metadata(
-                    block.title!,
-                    block.titleSourceMap,
+                    title,
                     28 * zoom,
                     TextStyle(
                       fontSize: 28 * zoom,
@@ -533,22 +555,20 @@ class _DocumentViewState extends State<DocumentView> {
                     ),
                   ),
                 ),
-              if (block.author != null)
+              if (author != null)
                 Padding(
                   padding: EdgeInsets.only(top: 8 * zoom),
                   child: metadata(
-                    block.author!,
-                    block.authorSourceMap,
+                    author,
                     _bodySize,
                     TextStyle(fontSize: _bodySize),
                   ),
                 ),
-              if (block.date != null)
+              if (date != null)
                 Padding(
                   padding: EdgeInsets.only(top: 4 * zoom),
                   child: metadata(
-                    block.date!,
-                    block.dateSourceMap,
+                    date,
                     _bodySize,
                     TextStyle(fontSize: _bodySize, fontStyle: FontStyle.italic),
                   ),
@@ -833,21 +853,38 @@ class _DocumentViewState extends State<DocumentView> {
             Text.rich(
               TextSpan(
                 children: <InlineSpan>[
-                  TextSpan(
-                    text: block.number == null
-                        ? '${block.noun}. '
-                        : '${block.noun} ${block.number}. ',
-                    style: TextStyle(
-                      fontWeight: isProof ? null : FontWeight.w700,
-                      fontStyle: isProof ? FontStyle.italic : null,
-                    ),
-                  ),
-                  if (block.title != null) ...[
+                  // amsthm: "Theorem 1 (Title)." with the note upright, and
+                  // a proof's optional title replaces the word "Proof".
+                  if (isProof)
                     TextSpan(
-                      children: _inlineSpans(context, block.title!, _bodySize),
+                      children: <InlineSpan>[
+                        if (block.title != null)
+                          ..._inlineSpans(context, block.title!, _bodySize)
+                        else
+                          const TextSpan(text: 'Proof'),
+                        const TextSpan(text: '. '),
+                      ],
                       style: const TextStyle(fontStyle: FontStyle.italic),
+                    )
+                  else ...[
+                    TextSpan(
+                      text: block.number == null
+                          ? block.noun
+                          : '${block.noun} ${block.number}',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
-                    const TextSpan(text: '. '),
+                    if (block.title != null)
+                      TextSpan(
+                        children: <InlineSpan>[
+                          const TextSpan(text: ' ('),
+                          ..._inlineSpans(context, block.title!, _bodySize),
+                          const TextSpan(text: ')'),
+                        ],
+                      ),
+                    const TextSpan(
+                      text: '. ',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
                   ],
                   if (runIn)
                     ..._inlineSpans(
@@ -1035,139 +1072,21 @@ class _DocumentViewState extends State<DocumentView> {
         ),
     };
 
-    final resolved = resolveTikzLayout(diagram, (node) {
-      final size = _measureSpan(nodeSpans[node.name]!);
-      return (width: size.width / pxPerCm, height: size.height / pxPerCm);
-    });
+    final labelSpans = Map<TikzEdgeLabel, TextSpan>.identity();
+    final layout = layoutTikzDiagram(
+      diagram,
+      pxPerCm: pxPerCm,
+      measureNode: (node) => _measureSpan(nodeSpans[node.name]!),
+      measureEdgeLabel: (label) => _measureSpan(
+        labelSpans[label] = _tikzLabelSpan(context, label.lines, edgeFontSize),
+      ),
+      labelGap: 4.0 * zoom,
+      margin: 4.0 * zoom,
+    );
     // The parser rejects unresolvable placements, so this cannot fail; keep
     // the placeholder as a defensive fallback rather than throwing.
-    if (resolved == null) return _diagramPlaceholder('tikzpicture');
-
-    // TikZ y points up; Flutter y points down. Flip while converting to px.
-    Rect rectOf(TikzPlacedNode placed) => Rect.fromCenter(
-      center: Offset(
-        (placed.centerX - resolved.minX) * pxPerCm,
-        (resolved.maxY - placed.centerY) * pxPerCm,
-      ),
-      width: placed.widthCm * pxPerCm,
-      height: placed.heightCm * pxPerCm,
-    );
-
-    final nodeRects = <String, Rect>{
-      for (final entry in resolved.placed.entries)
-        entry.key: rectOf(entry.value),
-    };
-
-    // The straight center-to-center line, clipped at each node's border.
-    Offset borderPoint(Rect rect, Offset direction) {
-      final tx = direction.dx == 0
-          ? double.infinity
-          : (rect.width / 2) / direction.dx.abs();
-      final ty = direction.dy == 0
-          ? double.infinity
-          : (rect.height / 2) / direction.dy.abs();
-      return rect.center + direction * math.min(tx, ty);
-    }
-
-    final edges = <_TikzEdgeGeometry>[];
-    final edgeLabels = <({Rect rect, TextSpan span})>[];
-    for (final edge in diagram.edges) {
-      final fromRect = nodeRects[edge.from]!;
-      final toRect = nodeRects[edge.to]!;
-      final direction = toRect.center - fromRect.center;
-      if (direction.distance == 0) continue;
-      final unit = direction / direction.distance;
-      final start = borderPoint(fromRect, unit);
-      final end = borderPoint(toRect, -unit);
-      edges.add(
-        _TikzEdgeGeometry(
-          start: start,
-          end: end,
-          arrow: edge.arrow,
-          thick: edge.thick,
-        ),
-      );
-      final label = edge.label;
-      if (label == null) continue;
-      final span = _tikzLabelSpan(context, label.lines, edgeFontSize);
-      final size = _measureSpan(span);
-      final gap = 4.0 * zoom;
-
-      // TikZ anchors the label at the path midpoint, offset to the given
-      // side. Real pictures put wide labels on short edges, so taking that
-      // literally runs labels into nodes; when it does, slide the anchor
-      // along the edge, then try riding perpendicular to it, and keep the
-      // first spot clear of every node and already-placed label.
-      Rect rectAt(Offset anchor) => switch (label.side) {
-        TikzSide.above => Rect.fromLTWH(
-          anchor.dx - size.width / 2,
-          anchor.dy - gap - size.height,
-          size.width,
-          size.height,
-        ),
-        TikzSide.below => Rect.fromLTWH(
-          anchor.dx - size.width / 2,
-          anchor.dy + gap,
-          size.width,
-          size.height,
-        ),
-        TikzSide.left => Rect.fromLTWH(
-          anchor.dx - gap - size.width,
-          anchor.dy - size.height / 2,
-          size.width,
-          size.height,
-        ),
-        TikzSide.right => Rect.fromLTWH(
-          anchor.dx + gap,
-          anchor.dy - size.height / 2,
-          size.width,
-          size.height,
-        ),
-      };
-      final mid = (start + end) / 2;
-      final length = (end - start).distance;
-      final normal = Offset(-unit.dy, unit.dx);
-      const slides = [0.0, .08, -.08, .16, -.16, .24, -.24, .32, -.32];
-      final candidates = <Rect>[
-        for (final t in slides) rectAt(mid + unit * (t * length)),
-        for (final t in slides)
-          for (final direction in [normal, -normal])
-            Rect.fromCenter(
-              center:
-                  mid +
-                  unit * (t * length) +
-                  direction *
-                      (direction.dx.abs() * size.width / 2 +
-                          direction.dy.abs() * size.height / 2 +
-                          gap),
-              width: size.width,
-              height: size.height,
-            ),
-      ];
-      bool isClear(Rect rect) {
-        final probe = rect.deflate(1);
-        for (final nodeRect in nodeRects.values) {
-          if (probe.overlaps(nodeRect)) return false;
-        }
-        for (final other in edgeLabels) {
-          if (probe.overlaps(other.rect)) return false;
-        }
-        return true;
-      }
-
-      final rect = candidates.firstWhere(isClear, orElse: () => candidates[0]);
-      edgeLabels.add((rect: rect, span: span));
-    }
-
-    // Edge labels can stick out past the node bounding box; pad the canvas
-    // to whatever the drawing covers.
-    var bounds = nodeRects.values.reduce((a, b) => a.expandToInclude(b));
-    for (final label in edgeLabels) {
-      bounds = bounds.expandToInclude(label.rect);
-    }
-    final margin = 4.0 * zoom;
-    final shift = Offset(margin - bounds.left, margin - bounds.top);
-    final natural = Size(bounds.width + 2 * margin, bounds.height + 2 * margin);
+    if (layout == null) return _diagramPlaceholder('tikzpicture');
+    final natural = layout.size;
 
     final diagramBody = SizedBox(
       width: natural.width,
@@ -1177,7 +1096,7 @@ class _DocumentViewState extends State<DocumentView> {
           Positioned.fill(
             child: CustomPaint(
               painter: _TikzEdgePainter(
-                edges: [for (final e in edges) e.shifted(shift)],
+                edges: layout.edges,
                 ink: _palette.ink,
                 zoom: zoom,
               ),
@@ -1185,7 +1104,7 @@ class _DocumentViewState extends State<DocumentView> {
           ),
           for (final node in diagram.nodes)
             Positioned.fromRect(
-              rect: nodeRects[node.name]!.shift(shift),
+              rect: layout.nodes[node.name]!,
               child: Container(
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
@@ -1204,9 +1123,9 @@ class _DocumentViewState extends State<DocumentView> {
                 ),
               ),
             ),
-          for (final label in edgeLabels)
+          for (final label in layout.labels)
             Positioned.fromRect(
-              rect: label.rect.shift(shift),
+              rect: label.rect,
               child: Container(
                 alignment: Alignment.center,
                 // TikZ edge labels conventionally get a halo (fill=white in
@@ -1215,7 +1134,7 @@ class _DocumentViewState extends State<DocumentView> {
                 // edge.
                 color: _palette.labelHalo,
                 child: Text.rich(
-                  label.span,
+                  labelSpans[label.label]!,
                   textAlign: TextAlign.center,
                   softWrap: false,
                 ),
@@ -1262,27 +1181,6 @@ class _DocumentViewState extends State<DocumentView> {
   }
 }
 
-final class _TikzEdgeGeometry {
-  const _TikzEdgeGeometry({
-    required this.start,
-    required this.end,
-    required this.arrow,
-    required this.thick,
-  });
-
-  final Offset start;
-  final Offset end;
-  final bool arrow;
-  final bool thick;
-
-  _TikzEdgeGeometry shifted(Offset by) => _TikzEdgeGeometry(
-    start: start + by,
-    end: end + by,
-    arrow: arrow,
-    thick: thick,
-  );
-}
-
 final class _TikzEdgePainter extends CustomPainter {
   const _TikzEdgePainter({
     required this.edges,
@@ -1290,7 +1188,7 @@ final class _TikzEdgePainter extends CustomPainter {
     required this.zoom,
   });
 
-  final List<_TikzEdgeGeometry> edges;
+  final List<TikzEdgeSegment> edges;
   final Color ink;
   final double zoom;
 

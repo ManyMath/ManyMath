@@ -44,8 +44,11 @@ script verifies those conditions using a local static server.
 
 ## Develop the Flutter editor
 
-The workspace expects the ManyUI and RaTeX repositories beside this repository
-at `../ManyUI` and `../ratex`.
+The workspace uses published RaTeX packages and a public ManyUI Git revision.
+No private repository or sibling checkout is required. Run
+`flutter pub get --enforce-lockfile` and `python3 tool/integration.py` from the
+repository root before building. See
+[`docs/integration-boundaries.md`](../../docs/integration-boundaries.md).
 
 ```sh
 bash tool/build_wasm.sh

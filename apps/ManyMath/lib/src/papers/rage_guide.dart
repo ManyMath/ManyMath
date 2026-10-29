@@ -25,7 +25,7 @@ const rageGuideSource = r'''
     stringstyle=\color{red},
     numbers=left,
     numberstyle=\tiny,
-    tabsize=2https://gist.github.com/sneurlax/7d47e4026cb1d296ac0a2e03bf997d55https://gist.github.com/sneurlax/7d47e4026cb1d296ac0a2e03bf997d55
+    tabsize=2
 }
 
 \title{Rage Guide}

@@ -15,7 +15,7 @@ coverage/
 target/
 **/Pods/
 
-# The web engine is built from the sibling Ratex repository.
+# The web engine is built from the pinned, resolved Ratex package.
 apps/ManyMath/web/ratex_ffi.wasm
 
 # Editors and operating systems
@@ -25,3 +25,7 @@ apps/ManyMath/web/ratex_ffi.wasm
 *.swp
 .idea/
 .vscode/
+
+# Python verification tools
+__pycache__/
+*.pyc

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manymath/src/latex_document.dart';
 import 'package:manymath/src/page_setup.dart';
+import 'package:manymath/src/print.dart';
 import 'package:manymath/src/print_document.dart';
 
 void main() {
@@ -15,6 +16,19 @@ void main() {
     formulaSvgs: svgs,
     fontBaseUrl: 'https://example.test/edit/assets/fonts/',
   );
+
+  test('fonts resolve under the base href with or without a slash', () {
+    // The editor's base href is /edit/ whether the reader opened /edit/
+    // or /edit; the document base URL is the same either way.
+    expect(
+      fontBaseUrlFor('https://manymath.com/edit/'),
+      'https://manymath.com/edit/assets/fonts/',
+    );
+    expect(
+      fontBaseUrlFor('https://manymath.com/edit/index.html'),
+      'https://manymath.com/edit/assets/fonts/',
+    );
+  });
 
   test('escapes HTML in the title and text runs', () {
     final html = htmlFor(const <DocBlock>[
@@ -75,9 +89,14 @@ void main() {
     final html = htmlFor(const <DocBlock>[
       HeadingBlock(1, <DocInline>[TextRun('Section')]),
       HeadingBlock(3, <DocInline>[TextRun('Subsubsection')]),
-      ListBlock(style: ListStyle.numbered, items: <List<DocBlock>>[
-        <DocBlock>[ParagraphBlock(<DocInline>[TextRun('first')])],
-      ]),
+      ListBlock(
+        style: ListStyle.numbered,
+        items: <List<DocBlock>>[
+          <DocBlock>[
+            ParagraphBlock(<DocInline>[TextRun('first')]),
+          ],
+        ],
+      ),
       TableBlock(<List<TableCellData>>[
         <TableCellData>[
           TableCellData(<DocInline>[TextRun('wide')], colSpan: 2),
@@ -92,10 +111,102 @@ void main() {
     expect(html, contains('<td>cell</td>'));
   });
 
-  test('diagrams degrade to an explanatory note, not a crash', () {
+  test('prints title metadata with the document macros expanded', () {
+    final html = htmlFor(
+      parseLatexDocument(r'''
+\newcommand{\Product}{ManyMath}
+\title{\Product{} Notes}
+\date{Draft}
+\begin{document}\maketitle\end{document}
+'''),
+    );
+    expect(html, contains('<h1 class="title">ManyMath Notes</h1>'));
+    expect(html, contains('<p class="date">Draft</p>'));
+  });
+
+  test('escapes theorem nouns and numbers from the document', () {
     final html = htmlFor(const <DocBlock>[
-      DiagramBlock('tikz', 'ignored'),
+      TheoremBlock(
+        noun: '<img src=x onerror=alert(1)>',
+        number: '1',
+        body: <DocBlock>[
+          ParagraphBlock(<DocInline>[TextRun('body')]),
+        ],
+      ),
     ]);
+    expect(html, isNot(contains('<img')));
+    expect(html, contains('&lt;img src=x onerror=alert(1)&gt; 1.'));
+  });
+
+  test('theorem notes and proof titles read as amsthm sets them', () {
+    final html = htmlFor(const <DocBlock>[
+      TheoremBlock(
+        noun: 'Theorem',
+        number: '1',
+        title: <DocInline>[TextRun('Main')],
+        body: <DocBlock>[
+          ParagraphBlock(<DocInline>[TextRun('body')]),
+        ],
+      ),
+      TheoremBlock(
+        noun: 'Proof',
+        title: <DocInline>[TextRun('Proof of the main theorem')],
+        body: <DocBlock>[
+          ParagraphBlock(<DocInline>[TextRun('argument')]),
+        ],
+      ),
+    ]);
+    expect(
+      html,
+      contains('<p><strong>Theorem 1</strong> (Main)<strong>.</strong> body'),
+    );
+    expect(html, contains('<p><em>Proof of the main theorem.</em> argument'));
+  });
+
+  test('closes the theorem label before a non-paragraph body', () {
+    final html = htmlFor(const <DocBlock>[
+      TheoremBlock(
+        noun: 'Lemma',
+        number: '2',
+        body: <DocBlock>[DisplayMathBlock('x')],
+      ),
+    ]);
+    expect(html, contains('<p><strong>Lemma 2.</strong> </p><pre>x</pre>'));
+  });
+
+  test('prints a supported TikZ diagram as a scalable SVG', () {
+    final blocks = parseLatexDocument(
+      '\\begin{tikzpicture}\n'
+      r'\node[draw, rounded corners] (a) at (0,0) {Start};'
+      r'\node[draw] (b) at (4,0) {$x^2$};'
+      r'\draw[->, thick] (a) -- node[above] {step} (b);'
+      '\n\\end{tikzpicture}\n',
+    );
+    final html = htmlFor(
+      blocks,
+      svgs: <String, String>{
+        formulaKey('x^2', false):
+            '<svg xmlns="http://www.w3.org/2000/svg" width="12pt" '
+            'height="9pt"><g/></svg>',
+      },
+    );
+    expect(html, isNot(contains('TikZ diagram omitted')));
+    expect(
+      html,
+      contains('<svg role="img" aria-label="TikZ diagram: 2 nodes, 1 edges"'),
+    );
+    expect('<rect '.allMatches(html), hasLength(2));
+    expect(html, contains('rx="'), reason: 'rounded corners');
+    expect('<line '.allMatches(html), hasLength(1));
+    expect('<polygon '.allMatches(html), hasLength(1), reason: 'arrowhead');
+    expect(html, contains('>Start</div></foreignObject>'));
+    expect(html, contains('<div class="tikz-text halo"'));
+    expect(html, contains('>step</div></foreignObject>'));
+    expect(html, contains('width="12pt" height="9pt"'), reason: 'label math');
+  });
+
+  test('diagrams degrade to an explanatory note, not a crash', () {
+    final html = htmlFor(const <DocBlock>[DiagramBlock('tikz', 'ignored')]);
     expect(html, contains('omitted from print'));
   });
 }

@@ -9,15 +9,17 @@ environment:
 resolution: workspace
 
 dependencies:
+  crypto: ^3.0.7
   file_selector: ^1.1.0
   flutter:
     sdk: flutter
   manyui:
-    path: ../../../ManyUI/manyui
-  ratex:
-    path: ../../../ratex/packages/ratex
-  ratex_flutter:
-    path: ../../../ratex/packages/ratex_flutter
+    git:
+      url: https://github.com/ManyMath/ManyUI.git
+      ref: d5b8881a8a582ef0f6f5989addd6ab1fd4ef144c
+      path: manyui
+  ratex: ^0.0.1
+  ratex_dart: ^0.0.1
   shared_preferences: ^2.5.5
   web: ^1.1.1
 

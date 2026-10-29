@@ -6,15 +6,22 @@ This repository contains the ManyMath editor and website:
 - `apps/ManyMath/site` is the ManyMath.com company and product website.
 - `apps/ManyMath/tool` builds the site and editor into one static distribution.
 
-The editor uses the shared ManyUI design system and the RaTeX rendering engine.
-Development requires sibling checkouts at `../ManyUI` and `../ratex`.
+The editor uses ManyUI and RaTeX. It builds without
+private repositories or sibling checkouts. This branch contains the standalone
+editor, parser, export tools and website. The optional review workspace is
+maintained separately on `feature/review-on-editor`; it is not included here.
+See [dependency and fixture ownership](docs/integration-boundaries.md).
 
 ## Develop
 
 ```sh
-flutter pub get
-flutter analyze apps/ManyMath
-flutter test apps/ManyMath/test
+flutter pub get --enforce-lockfile
+python3 tool/integration.py
+flutter analyze --no-pub apps/ManyMath
+export RUSTUP_TOOLCHAIN=1.94.0
+export CARGO_HOME="$PWD/.dart_tool/cargo-home"
+export RATEX_LIB="$(python3 tool/build_engine.py native)"
+flutter test --no-pub apps/ManyMath/test
 ```
 
 Build the RaTeX WebAssembly engine before running the editor in Chrome:

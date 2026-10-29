@@ -105,6 +105,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.3.5+4"
+  crypto:
+    dependency: transitive
+    description:
+      name: crypto
+      sha256: c8ea0233063ba03258fbcf2ca4d6dadfefe14f02fab57702265467a19f27fadf
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.0.7"
   fake_async:
     dependency: transitive
     description:
@@ -309,20 +317,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "6.1.0"
-  listen:
-    dependency: transitive
-    description:
-      name: listen
-      sha256: "47501a08016a43fcad79252439d723f50f14f88fa7bfd8a177e0a417e5c9e1f2"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.1"
   manyui:
     dependency: transitive
     description:
-      path: "../ManyUI/manyui"
-      relative: true
-    source: path
+      path: manyui
+      ref: d5b8881a8a582ef0f6f5989addd6ab1fd4ef144c
+      resolved-ref: d5b8881a8a582ef0f6f5989addd6ab1fd4ef144c
+      url: "https://github.com/ManyMath/ManyUI.git"
+    source: git
     version: "0.1.1"
   matcher:
     dependency: transitive
@@ -469,18 +471,20 @@ packages:
     source: hosted
     version: "1.5.0"
   ratex:
-    dependency: "direct overridden"
-    description:
-      path: "../ratex/packages/ratex"
-      relative: true
-    source: path
-    version: "0.0.1"
-  ratex_flutter:
     dependency: transitive
     description:
-      path: "../ratex/packages/ratex_flutter"
-      relative: true
-    source: path
+      name: ratex
+      sha256: adbeff37beafebf518dd429352ce29dcda0220478eac77d3da76d515381315ec
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.1"
+  ratex_dart:
+    dependency: transitive
+    description:
+      name: ratex_dart
+      sha256: "2c4058672c0caf3242283b55058c10673527c5c6c9d19081592b2836ec0ebbe5"
+      url: "https://pub.dev"
+    source: hosted
     version: "0.0.1"
   shared_preferences:
     dependency: transitive
@@ -587,10 +591,10 @@ packages:
     dependency: transitive
     description:
       name: test_api
-      sha256: "475610b2aa23c19687cce2961e44b0cc57cafe220f67c2b80201231b2a07fbe7"
+      sha256: "2a122cbe059f8b610d3a5415f42e255b6c17b1f21eee1d960f31080237fb4f11"
       url: "https://pub.dev"
     source: hosted
-    version: "0.7.13"
+    version: "0.7.12"
   typed_data:
     dependency: transitive
     description:
@@ -603,10 +607,10 @@ packages:
     dependency: transitive
     description:
       name: vector_math
-      sha256: f36f9f3be64c6198714492bb455c11056e33e2f85d9a0b676a48301e44fdcf47
+      sha256: fa49e1674cb84acb900141714e6c6e1f9ae099827c24d141430ff6819db4e1bc
       url: "https://pub.dev"
     source: hosted
-    version: "2.4.2"
+    version: "2.4.4"
   vm_service:
     dependency: transitive
     description:

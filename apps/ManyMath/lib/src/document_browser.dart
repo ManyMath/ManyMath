@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:manyui/manyui.dart';
 
@@ -72,72 +75,97 @@ class DocumentBrowser extends StatelessWidget {
             ),
           ),
           const MDivider(),
-          if (store.recoveryPayload != null)
-            Padding(
-              padding: const EdgeInsets.all(10),
-              child: MAlert(
-                title: 'Local data recovered',
-                message:
-                    'A damaged record was skipped. The original data remains '
-                    'available for recovery.',
-                variant: MAlertVariant.neutral,
-              ),
-            ),
           Expanded(
             child: ListenableBuilder(
               listenable: store,
               builder: (context, _) {
-                final documents = store.documents;
-                if (documents.isEmpty) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: MEmptyState(
-                        title: 'No documents yet',
-                        description: 'Create a document to start writing.',
+                final recovery = store.recoveryPayload;
+                final list = _buildList(context, theme);
+                if (recovery == null) return list;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: MAlert(
+                        title: 'Local data recovered',
+                        message:
+                            'A damaged record was skipped. Copy the original '
+                            'data to keep it, or dismiss it to delete it.',
+                        variant: MAlertVariant.neutral,
                         actions: <Widget>[
                           MButton(
-                            onPressed: onCreate,
-                            child: const Text('New document'),
+                            size: MButtonSize.xs,
+                            variant: MButtonVariant.outline,
+                            onPressed: () => Clipboard.setData(
+                              ClipboardData(text: recovery),
+                            ),
+                            child: const Text('Copy data'),
+                          ),
+                          MButton(
+                            size: MButtonSize.xs,
+                            variant: MButtonVariant.ghost,
+                            onPressed: () =>
+                                unawaited(store.clearRecoveryPayload()),
+                            child: const Text('Dismiss'),
                           ),
                         ],
                       ),
                     ),
-                  );
-                }
-                return ListView.builder(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  itemCount: documents.length,
-                  itemBuilder: (context, index) {
-                    final document = documents[index];
-                    final updated = relativeDocumentTime(document.updatedAt);
-                    return MListTile(
-                      selected: document.id == selectedId,
-                      semanticLabel: 'Open ${document.name}, updated $updated',
-                      title: Text(
-                        document.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        updated,
-                        style: theme.typography.caption.copyWith(
-                          color: theme.colors.mutedForeground,
-                        ),
-                      ),
-                      trailing: _DocumentActions(
-                        documentName: document.name,
-                        onAction: (action) => onAction(document, action),
-                      ),
-                      onTap: () => onSelect(document),
-                    );
-                  },
+                    Expanded(child: list),
+                  ],
                 );
               },
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildList(BuildContext context, MThemeData theme) {
+    final documents = store.documents;
+    if (documents.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: MEmptyState(
+            title: 'No documents yet',
+            description: 'Create a document to start writing.',
+            actions: <Widget>[
+              MButton(onPressed: onCreate, child: const Text('New document')),
+            ],
+          ),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      itemCount: documents.length,
+      itemBuilder: (context, index) {
+        final document = documents[index];
+        final updated = relativeDocumentTime(document.updatedAt);
+        return MListTile(
+          selected: document.id == selectedId,
+          semanticLabel: 'Open ${document.name}, updated $updated',
+          title: Text(
+            document.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            updated,
+            style: theme.typography.caption.copyWith(
+              color: theme.colors.mutedForeground,
+            ),
+          ),
+          trailing: _DocumentActions(
+            documentName: document.name,
+            onAction: (action) => onAction(document, action),
+          ),
+          onTap: () => onSelect(document),
+        );
+      },
     );
   }
 }

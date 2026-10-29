@@ -7,10 +7,6 @@ environment:
 workspace:
   - apps/ManyMath
 
-dependency_overrides:
-  ratex:
-    path: ../ratex/packages/ratex
-
 dev_dependencies:
   melos: ^7.0.0
 
